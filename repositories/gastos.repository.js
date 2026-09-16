@@ -1,6 +1,5 @@
 import { executeQuery } from "../db.js";
 import { Currency, ExpenseType, ExpenseStatus } from "../utils/enums.js";
-import { logRed, logGreen } from "../utils/logs_custom.js";
 
 const CALCULATED_FIELDS = `
   (SELECT COUNT(*) FROM purchases_movements WHERE purchase_id = p.id AND movement_type = 'PAYMENT')::int AS payed_quotas,
@@ -15,101 +14,6 @@ const CALCULATED_FIELDS = `
   (SELECT lnk.name FROM purchases lnk WHERE lnk.id = p.linked_purchase_id) AS linked_name,
   (SELECT lnk.type FROM purchases lnk WHERE lnk.id = p.linked_purchase_id) AS linked_type
 `;
-
-/**
- * Asegura las columnas extra de "purchases" que no vienen del esquema base.
- * Se llama una vez al arrancar el server (index.js), igual que ensureReconcileSchema.
- */
-export async function ensureGastosSchema() {
-  const steps = [
-    ["purchases.linked_purchase_id", `
-      ALTER TABLE purchases ADD COLUMN IF NOT EXISTS linked_purchase_id INTEGER
-    `],
-    ["purchases_movements.created_by_user_id", `
-      ALTER TABLE purchases_movements ADD COLUMN IF NOT EXISTS created_by_user_id INTEGER
-    `],
-    ["purchases.is_postponed", `
-      ALTER TABLE purchases ADD COLUMN IF NOT EXISTS is_postponed BOOLEAN NOT NULL DEFAULT false
-    `],
-    ["purchases.is_favorite", `
-      ALTER TABLE purchases ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN NOT NULL DEFAULT false
-    `],
-    ["financial_entities.is_favorite", `
-      ALTER TABLE financial_entities ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN NOT NULL DEFAULT false
-    `],
-    // Texto libre para el historial de la entidad ("Vinculada a X", nombre de
-    // la compra creada, "nombre viejo -> nuevo", etc.).
-    ["financial_entities_movements.detail", `
-      ALTER TABLE financial_entities_movements ADD COLUMN IF NOT EXISTS detail TEXT
-    `],
-    // Índices para el listado de entidades y los CALCULATED_FIELDS (que
-    // cuentan movimientos por compra en casi todas las queries de gastos).
-    ["idx purchases(financial_entity_id, status)", `
-      CREATE INDEX IF NOT EXISTS purchases_entity_status_idx
-        ON purchases (financial_entity_id, status) WHERE deleted = false
-    `],
-    ["idx purchases_movements(purchase_id, movement_type)", `
-      CREATE INDEX IF NOT EXISTS purchases_movements_purchase_type_idx
-        ON purchases_movements (purchase_id, movement_type)
-    `],
-  ];
-
-  for (const [name, sql] of steps) {
-    try {
-      await executeQuery(sql);
-    } catch (err) {
-      logRed(`[gastos schema] falló "${name}": ${err.message}`);
-      throw err;
-    }
-  }
-
-  // "movement_type" es un enum de Postgres (compartido por purchases_movements
-  // y financial_entities_movements): registramos los valores nuevos antes de
-  // poder insertarlos.
-  for (const value of ["PENDING_PAYMENT", "RESTORE", "EDITED", "LINK", "UNLINK", "PURCHASE_CREATED", "POSTPONED", "UNPOSTPONED"]) {
-    try {
-      await ensureMovementTypeValue(value);
-    } catch (err) {
-      logRed(`[gastos schema] falló "movement_type += ${value}": ${err.message}`);
-      throw err;
-    }
-  }
-
-  logGreen("[gastos schema] OK");
-}
-
-async function ensureMovementTypeValue(value) {
-  const typeRows = await executeQuery(`
-    SELECT t.typname, t.typtype
-    FROM pg_attribute a
-    JOIN pg_class c ON c.oid = a.attrelid
-    JOIN pg_type  t ON t.oid = a.atttypid
-    WHERE c.relname = 'purchases_movements'
-      AND a.attname = 'movement_type'
-      AND a.attnum > 0
-      AND NOT a.attisdropped
-    LIMIT 1
-  `);
-
-  const meta = typeRows[0];
-  if (!meta || meta.typtype !== "e") return; // no es enum: nada que asegurar
-
-  const exists = await executeQuery(
-    `
-    SELECT 1
-    FROM pg_enum e
-    JOIN pg_type t ON t.oid = e.enumtypid
-    WHERE t.typname = $1 AND e.enumlabel = $2
-    LIMIT 1
-  `,
-    [meta.typname, value]
-  );
-
-  if (exists.length) return;
-
-  // Sin IF NOT EXISTS para compatibilidad con Postgres < 12; ya validamos arriba.
-  await executeQuery(`ALTER TYPE "${meta.typname}" ADD VALUE '${value}'`);
-}
 
 export class GastosRepository {
   async getById(id) {
