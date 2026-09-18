@@ -62,9 +62,9 @@ export class ReconcileService {
         return { session, items: [], alreadyOpen: false };
     }
 
-    async setItem(userId, purchaseId, checked, auto = false) {
+    async setItem(userId, purchaseId, checked) {
         const session = await this.#requireOpenSession(userId);
-        if (checked) await this.reconcileRepository.upsertItem(session.id, purchaseId, auto);
+        if (checked) await this.reconcileRepository.upsertItem(session.id, purchaseId);
         else await this.reconcileRepository.removeItem(session.id, purchaseId);
         const items = await this.reconcileRepository.getSessionItems(session.id);
         return { session, items };
@@ -74,7 +74,7 @@ export class ReconcileService {
         const session = await this.#requireOpenSession(userId);
         const ids = purchaseIds.map(Number).filter(Number.isFinite);
         if (ids.length) {
-            if (checked) await this.reconcileRepository.addItems(session.id, ids, false);
+            if (checked) await this.reconcileRepository.addItems(session.id, ids);
             else await this.reconcileRepository.removeItems(session.id, ids);
         }
         const items = await this.reconcileRepository.getSessionItems(session.id);
@@ -101,7 +101,6 @@ export class ReconcileService {
             fixed_expense: r.fixed_expense,
             number_of_quotas: r.number_of_quotas ?? null,
             quota_number: r.quota_number ?? null,
-            auto: r.auto,
             checked_at: r.checked_at,
         }));
 
@@ -181,7 +180,7 @@ export class ReconcileService {
             try {
                 await this.gastosService.efectuarPago(gasto, userId, paymentDate);
                 // Releer quota_number ahora que el pago quedó registrado.
-                await this.reconcileRepository.upsertItem(sessionId, it.purchase_id, it.auto);
+                await this.reconcileRepository.upsertItem(sessionId, it.purchase_id);
             } catch (err) {
                 logRed(`[reconcile finish] no se pudo pagar la compra ${it.purchase_id}: ${err.message}`);
             }

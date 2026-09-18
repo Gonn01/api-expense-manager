@@ -40,7 +40,7 @@ export class EntidadesFinancierasRepository {
              LEFT JOIN users u ON u.id = fe.linked_user_id
              WHERE fe.id = $1 AND fe.deleted = false AND fe.user_id = $2
              LIMIT 1`,
-            [id, userId], true
+            [id, userId]
         );
     }
 
@@ -50,7 +50,7 @@ export class EntidadesFinancierasRepository {
              SET is_favorite = $3
              WHERE id = $1 AND user_id = $2 AND deleted = false
              RETURNING id, name, user_id, deleted, created_at, linked_user_id, is_favorite`,
-            [id, userId, value], true
+            [id, userId, value]
         );
     }
 
@@ -60,7 +60,7 @@ export class EntidadesFinancierasRepository {
                 `SELECT id, name FROM financial_entities
                  WHERE user_id = $1 AND LOWER(name) = LOWER($2) AND deleted = false AND id != $3
                  LIMIT 1`,
-                [userId, name, excludeId], true
+                [userId, name, excludeId]
             );
         }
 
@@ -68,7 +68,7 @@ export class EntidadesFinancierasRepository {
             `SELECT id, name FROM financial_entities
              WHERE user_id = $1 AND LOWER(name) = LOWER($2) AND deleted = false
              LIMIT 1`,
-            [userId, name], true
+            [userId, name]
         );
     }
 
@@ -77,7 +77,7 @@ export class EntidadesFinancierasRepository {
             `INSERT INTO financial_entities (name, user_id, deleted, created_at)
              VALUES ($1, $2, false, NOW())
              RETURNING id, name, user_id, deleted, created_at, linked_user_id`,
-            [name, userId], true
+            [name, userId]
         );
     }
 
@@ -87,7 +87,7 @@ export class EntidadesFinancierasRepository {
              SET name = $1
              WHERE id = $2 AND user_id = $3
              RETURNING id, name, user_id, deleted, created_at, linked_user_id`,
-            [name, id, userId], true
+            [name, id, userId]
         );
     }
 
@@ -97,7 +97,7 @@ export class EntidadesFinancierasRepository {
              SET deleted = true
              WHERE id = $1 AND user_id = $2
              RETURNING id`,
-            [id, userId], true
+            [id, userId]
         );
     }
 
@@ -106,7 +106,7 @@ export class EntidadesFinancierasRepository {
             `SELECT id, name FROM financial_entities
              WHERE user_id = $1 AND linked_user_id = $2 AND deleted = false
              LIMIT 1`,
-            [userId, linkedUserId], true
+            [userId, linkedUserId]
         );
     }
 
@@ -116,7 +116,7 @@ export class EntidadesFinancierasRepository {
              SET linked_user_id = $3
              WHERE id = $1 AND user_id = $2 AND deleted = false
              RETURNING id, name, user_id, deleted, created_at, linked_user_id`,
-            [id, userId, linkedUserId], true
+            [id, userId, linkedUserId]
         );
     }
 
@@ -126,7 +126,7 @@ export class EntidadesFinancierasRepository {
              SET linked_user_id = NULL
              WHERE id = $1 AND user_id = $2 AND deleted = false
              RETURNING id, name, user_id, deleted, created_at, linked_user_id`,
-            [id, userId], true
+            [id, userId]
         );
     }
 }

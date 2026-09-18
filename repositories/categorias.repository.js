@@ -7,7 +7,7 @@ export class CategoriasRepository {
              FROM user_categories
              WHERE user_id = $1 AND deleted = false
              ORDER BY created_at DESC`,
-            [userId], true
+            [userId]
         );
     }
 
@@ -16,7 +16,7 @@ export class CategoriasRepository {
             `SELECT id, name, color, created_at
              FROM user_categories
              WHERE id = $1 AND user_id = $2 AND deleted = false`,
-            [id, userId], true
+            [id, userId]
         );
     }
 
@@ -25,7 +25,7 @@ export class CategoriasRepository {
             `INSERT INTO user_categories (name, color, user_id, deleted, created_at)
              VALUES ($1, $2, $3, false, NOW())
              RETURNING id, name, color, created_at`,
-            [name, color ?? '#52b788', userId], true
+            [name, color ?? '#52b788', userId]
         );
     }
 
@@ -35,7 +35,7 @@ export class CategoriasRepository {
              SET name = $1, color = $2
              WHERE id = $3 AND user_id = $4 AND deleted = false
              RETURNING id, name, color, created_at`,
-            [name, color ?? '#52b788', id, userId], true
+            [name, color ?? '#52b788', id, userId]
         );
     }
 
@@ -45,7 +45,7 @@ export class CategoriasRepository {
              SET deleted = true
              WHERE id = $1 AND user_id = $2
              RETURNING id`,
-            [id, userId], true
+            [id, userId]
         );
     }
 
@@ -55,14 +55,14 @@ export class CategoriasRepository {
              FROM user_categories uc
              JOIN purchases_categories pc ON pc.category_id = uc.id
              WHERE pc.purchase_id = $1 AND uc.deleted = false`,
-            [gastoId], true
+            [gastoId]
         );
     }
 
     async setCategoriasForGasto(gastoId, categoryIds) {
         await executeQuery(
             `DELETE FROM purchases_categories WHERE purchase_id = $1`,
-            [gastoId], true
+            [gastoId]
         );
 
         if (!categoryIds || categoryIds.length === 0) return [];
@@ -72,7 +72,7 @@ export class CategoriasRepository {
             `INSERT INTO purchases_categories (purchase_id, category_id, created_at)
              VALUES ${values}
              RETURNING category_id`,
-            [gastoId, ...categoryIds], true
+            [gastoId, ...categoryIds]
         );
     }
 }

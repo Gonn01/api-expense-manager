@@ -32,7 +32,7 @@ export class ReconcileController {
     setItems = async (req, res) => {
         try {
             const { userId } = req.session;
-            const { purchase_id, purchase_ids, checked, auto } = req.body;
+            const { purchase_id, purchase_ids, checked } = req.body;
 
             if (typeof checked !== "boolean") {
                 return badRequest(res, "Debe enviar 'checked' (boolean)");
@@ -42,7 +42,7 @@ export class ReconcileController {
             if (Array.isArray(purchase_ids)) {
                 data = await this.reconcileService.setItemsBulk(userId, purchase_ids, checked);
             } else if (purchase_id !== undefined && purchase_id !== null) {
-                data = await this.reconcileService.setItem(userId, Number(purchase_id), checked, Boolean(auto));
+                data = await this.reconcileService.setItem(userId, Number(purchase_id), checked);
             } else {
                 return badRequest(res, "Debe enviar 'purchase_id' o 'purchase_ids'");
             }

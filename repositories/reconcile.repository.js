@@ -24,7 +24,7 @@ export class ReconcileRepository {
 
     async getSessionItems(sessionId) {
         return await executeQuery(
-            `SELECT purchase_id, auto, quota_number, checked_at
+            `SELECT purchase_id, quota_number, checked_at
              FROM reconcile_session_items
              WHERE session_id = $1
              ORDER BY checked_at ASC`,
@@ -32,7 +32,7 @@ export class ReconcileRepository {
         );
     }
 
-    async upsertItem(sessionId, purchaseId, auto = false) {
+    async upsertItem(sessionId, purchaseId) {
         // quota_number = cuotas pagadas del gasto en este momento
         // (si se llama tras pagar, ya incluye la recién pagada).
         const cnt = await executeQuery(
@@ -43,16 +43,15 @@ export class ReconcileRepository {
         const quota = cnt[0]?.n ?? 0;
 
         return await executeQuery(
-            `INSERT INTO reconcile_session_items (session_id, purchase_id, auto, quota_number)
-             VALUES ($1, $2, $3, $4)
+            `INSERT INTO reconcile_session_items (session_id, purchase_id, quota_number)
+             VALUES ($1, $2, $3)
              ON CONFLICT (session_id, purchase_id)
              DO UPDATE SET
-                 auto = reconcile_session_items.auto OR EXCLUDED.auto,
                  quota_number = GREATEST(
                      COALESCE(reconcile_session_items.quota_number, 0),
                      COALESCE(EXCLUDED.quota_number, 0)
                  )`,
-            [sessionId, purchaseId, auto, quota],
+            [sessionId, purchaseId, quota],
         );
     }
 
@@ -70,9 +69,9 @@ export class ReconcileRepository {
         }
     }
 
-    async addItems(sessionId, purchaseIds, auto = false) {
+    async addItems(sessionId, purchaseIds) {
         for (const purchaseId of purchaseIds) {
-            await this.upsertItem(sessionId, purchaseId, auto);
+            await this.upsertItem(sessionId, purchaseId);
         }
     }
 
@@ -80,7 +79,6 @@ export class ReconcileRepository {
         return await executeQuery(
             `SELECT
                 i.purchase_id,
-                i.auto,
                 i.checked_at,
                 i.quota_number,
                 p.name,

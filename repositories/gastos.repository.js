@@ -21,7 +21,7 @@ export class GastosRepository {
       `SELECT p.*, ${CALCULATED_FIELDS}
        FROM purchases p
        WHERE p.id = $1 AND p.deleted = false`,
-      [id], true
+      [id]
     );
   }
 
@@ -31,7 +31,7 @@ export class GastosRepository {
       `SELECT p.*, ${CALCULATED_FIELDS}
        FROM purchases p
        WHERE p.id = $1`,
-      [id], true
+      [id]
     );
   }
 
@@ -48,7 +48,7 @@ export class GastosRepository {
        FROM purchases p
        WHERE p.financial_entity_id = $1 AND p.deleted = false AND p.status = 'ACTIVE'
        ORDER BY p.created_at DESC`,
-      [entidadId], true
+      [entidadId]
     );
   }
 
@@ -65,7 +65,7 @@ export class GastosRepository {
        FROM purchases p
        WHERE p.financial_entity_id = $1 AND p.deleted = false AND p.status = 'PENDING_APPROVAL'
        ORDER BY p.created_at DESC`,
-      [entidadId], true
+      [entidadId]
     );
   }
 
@@ -83,7 +83,7 @@ export class GastosRepository {
        FROM purchases p
        WHERE p.financial_entity_id = $1 AND p.deleted = true
        ORDER BY p.created_at DESC`,
-      [entidadId], true
+      [entidadId]
     );
   }
 
@@ -91,7 +91,7 @@ export class GastosRepository {
   async restore(id) {
     return await executeQuery(
       `UPDATE purchases SET deleted = false WHERE id = $1 AND deleted = true RETURNING id`,
-      [id], true
+      [id]
     );
   }
 
@@ -100,7 +100,7 @@ export class GastosRepository {
       `SELECT COUNT(*)::int AS count
        FROM purchases
        WHERE financial_entity_id = $1 AND deleted = false AND status = 'PENDING_APPROVAL'`,
-      [entidadId], true
+      [entidadId]
     );
     return rows[0]?.count ?? 0;
   }
@@ -110,7 +110,7 @@ export class GastosRepository {
       `SELECT p.*, ${CALCULATED_FIELDS}
        FROM purchases p
        WHERE p.id = $1 AND p.deleted = false`,
-      [id], true
+      [id]
     );
   }
 
@@ -121,7 +121,7 @@ export class GastosRepository {
         `SELECT p.*, ${CALCULATED_FIELDS}
          FROM purchases p
          WHERE p.id = $1 AND p.deleted = false`,
-        [id], true
+        [id]
       );
       if (result.length > 0) updated.push(result[0]);
     }
@@ -142,14 +142,14 @@ export class GastosRepository {
            CASE WHEN fixed_expense = false AND (SELECT COUNT(*) FROM purchases_movements WHERE purchase_id = $6 AND movement_type = 'PAYMENT') >= number_of_quotas
                 THEN (SELECT MAX(payment_date) FROM purchases_movements WHERE purchase_id = $6 AND movement_type = 'PAYMENT')
                 ELSE NULL END AS finalization_date`,
-      [name, amount, image_url || null, fixed_expense || false, dbType, id], true
+      [name, amount, image_url || null, fixed_expense || false, dbType, id]
     );
   }
 
   async delete(id) {
     return await executeQuery(
       `UPDATE purchases SET deleted = true WHERE id = $1 RETURNING id`,
-      [id], true
+      [id]
     );
   }
 
@@ -159,7 +159,7 @@ export class GastosRepository {
       `UPDATE purchases
        SET linked_purchase_id = CASE id WHEN $1 THEN $2 WHEN $2 THEN $1 END
        WHERE id IN ($1, $2)`,
-      [aId, bId], true
+      [aId, bId]
     );
   }
 
@@ -168,7 +168,7 @@ export class GastosRepository {
     return await executeQuery(
       `UPDATE purchases SET linked_purchase_id = NULL
        WHERE id = $1 OR linked_purchase_id = $1`,
-      [id], true
+      [id]
     );
   }
 
@@ -218,14 +218,14 @@ export class GastosRepository {
         shared_from_id,
         receiver_user_id,
         linked_purchase_id,
-      ], true
+      ]
     );
   }
 
   async updateStatus(id, status) {
     return await executeQuery(
       `UPDATE purchases SET status = $2 WHERE id = $1 AND deleted = false RETURNING *`,
-      [id, status], true
+      [id, status]
     );
   }
 
@@ -237,7 +237,7 @@ export class GastosRepository {
        SET is_postponed = $2
        WHERE p.id = $1 AND p.deleted = false
        RETURNING p.*, ${CALCULATED_FIELDS}`,
-      [id, value], true
+      [id, value]
     );
   }
 
@@ -247,7 +247,7 @@ export class GastosRepository {
        SET is_favorite = $2
        WHERE p.id = $1 AND p.deleted = false
        RETURNING p.*, ${CALCULATED_FIELDS}`,
-      [id, value], true
+      [id, value]
     );
   }
 
@@ -262,7 +262,7 @@ export class GastosRepository {
          AND number_of_quotas > 0
          AND (SELECT COUNT(*) FROM purchases_movements
               WHERE purchase_id = $1 AND movement_type = 'PAYMENT') >= number_of_quotas`,
-      [purchaseId], true
+      [purchaseId]
     );
   }
 
@@ -273,7 +273,7 @@ export class GastosRepository {
        SET status = 'ACTIVE', financial_entity_id = $2
        WHERE id = $1 AND deleted = false
        RETURNING *, ${CALCULATED_FIELDS.replace(/p\./g, '')}`,
-      [id, financialEntityId], true
+      [id, financialEntityId]
     );
   }
 
@@ -284,7 +284,7 @@ export class GastosRepository {
        JOIN financial_entities fe ON fe.id = p.financial_entity_id
        WHERE p.id = $1 AND p.deleted = false
        LIMIT 1`,
-      [purchaseId], true
+      [purchaseId]
     );
   }
 
@@ -301,21 +301,21 @@ export class GastosRepository {
        JOIN users receiver ON receiver.id = copy.receiver_user_id
        WHERE copy.id = $1 AND copy.deleted = false
        LIMIT 1`,
-      [copyId], true
+      [copyId]
     );
   }
 
   async getUserName(userId) {
     return await executeQuery(
       `SELECT name FROM users WHERE id = $1 LIMIT 1`,
-      [userId], true
+      [userId]
     );
   }
 
   async getSharedCopyByOriginalId(originalId) {
     return await executeQuery(
       `SELECT * FROM purchases WHERE shared_from_id = $1 AND deleted = false LIMIT 1`,
-      [originalId], true
+      [originalId]
     );
   }
 
@@ -340,7 +340,7 @@ export class GastosRepository {
        LEFT JOIN financial_entities fe ON fe.id = sib.financial_entity_id
        WHERE p.id = $1 AND p.deleted = false
        LIMIT 1`,
-      [purchaseId], true
+      [purchaseId]
     );
   }
 
@@ -383,7 +383,7 @@ export class GastosRepository {
        JOIN users counterparty ON counterparty.id = pend.counterparty_user_id
        WHERE pend.created_by_user_id = $1 OR pend.counterparty_user_id = $1
        ORDER BY pend.created_at DESC`,
-      [userId], true
+      [userId]
     );
   }
 
@@ -411,8 +411,9 @@ export class GastosRepository {
        JOIN users u_sender ON u_sender.id = fe_original.user_id
        LEFT JOIN financial_entities fe_assigned ON fe_assigned.id = p.financial_entity_id
        WHERE p.receiver_user_id = $1 AND p.deleted = false
+         AND p.status IN ('PENDING_APPROVAL', 'REJECTED')
        ORDER BY p.created_at DESC`,
-      [userId], true
+      [userId]
     );
   }
 
@@ -435,8 +436,9 @@ export class GastosRepository {
        LEFT JOIN financial_entities fe_copy ON fe_copy.id = copy.financial_entity_id
        JOIN users u_receiver ON u_receiver.id = copy.receiver_user_id
        WHERE p.deleted = false AND p.status = 'ACTIVE'
+         AND copy.status IN ('PENDING_APPROVAL', 'REJECTED')
        ORDER BY p.created_at DESC`,
-      [userId], true
+      [userId]
     );
   }
 }

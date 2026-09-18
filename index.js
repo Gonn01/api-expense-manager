@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import routesIndex from "./routes/index.js";
-import { logBlue } from "./utils/logs_custom.js";
+import { logBlue, logGray } from "./utils/logs_custom.js";
 import { errorMiddleware } from "./utils/errors.js";
 
 const app = express();
@@ -9,6 +9,11 @@ app.use(cors());
 app.use(express.json());
 
 const port = process.env.PORT || 3000;
+
+app.use((req, res, next) => {
+    logGray(`${req.method} ${req.originalUrl}`);
+    next();
+});
 
 app.use("/api", routesIndex);
 

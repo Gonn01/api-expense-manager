@@ -31,7 +31,7 @@ async function runSeed() {
   user_categories,
   financial_entities
 RESTART IDENTITY CASCADE;
-    `, [], true);
+    `, []);
 
     // ── CATEGORÍAS ────────────────────────────────────────────────────────────
     logCyan("➡ Creando categorías…");

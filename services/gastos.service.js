@@ -400,7 +400,7 @@ export class GastosService {
             if (rows[0].is_postponed) {
                 throw customError(ErrorCode.GASTO_POSTERGADO);
             }
-            await this.reconcileRepository.upsertItem(session.id, purchase_id, false);
+            await this.reconcileRepository.upsertItem(session.id, purchase_id);
             return rows;
         }
 
@@ -515,7 +515,7 @@ export class GastosService {
                     continue;
                 }
 
-                await this.reconcileRepository.upsertItem(session.id, id, false);
+                await this.reconcileRepository.upsertItem(session.id, id);
                 updated.push(gasto);
             } catch (err) {
                 failed.push({ id, reason: err.message });
