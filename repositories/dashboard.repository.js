@@ -51,6 +51,6 @@ export class DashboardRepository {
             WHERE e.user_id = $1
               AND e.deleted = false
             GROUP BY e.id ORDER BY e.is_favorite DESC, e.created_at DESC;
-    `, [userId], true);
+    `, [userId]);
   }
 }

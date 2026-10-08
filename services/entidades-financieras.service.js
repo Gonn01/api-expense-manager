@@ -1,5 +1,6 @@
 import { MovementType } from "../utils/enums.js";
 import { customError, ErrorCode } from "../utils/errors.js";
+import { logRed } from "../utils/logs_custom.js";
 
 export class EntidadesFinancierasService {
   constructor({ entidadesFinancierasRepository, gastosRepository, movementsRepository, authRepository }) {
@@ -7,6 +8,17 @@ export class EntidadesFinancierasService {
     this.gastosRepository = gastosRepository;
     this.movementsRepository = movementsRepository;
     this.authRepository = authRepository;
+  }
+
+  // Registra un movimiento en el historial de la entidad. Best-effort: si falla
+  // el log no rompemos la operación real.
+  async #log(entidadId, type, detail = null) {
+    if (!entidadId) return;
+    try {
+      await this.movementsRepository.createEntidadLog(entidadId, type, detail);
+    } catch (err) {
+      logRed(`[historial entidad ${entidadId}] no se pudo registrar ${type}: ${err.message}`);
+    }
   }
 
   async listar(userId) {
@@ -70,7 +82,12 @@ export class EntidadesFinancierasService {
     const existing = await this.entidadesFinancierasRepository.findByName(userId, name, id);
     if (existing.length) throw customError(ErrorCode.ENTIDAD_YA_EXISTE);
 
+    const oldName = currentRows[0].name;
     const [row] = await this.entidadesFinancierasRepository.update(id, name, userId);
+
+    if (name !== oldName) {
+      await this.#log(id, MovementType.EDITED, `Nombre: "${oldName}" → "${name}"`);
+    }
 
     return row;
   }
@@ -97,6 +114,13 @@ export class EntidadesFinancierasService {
     return await this.movementsRepository.getMovementsByEntidad(id);
   }
 
+  async gastosEliminados(entidadId, userId) {
+    const entidad = await this.entidadesFinancierasRepository.getById(entidadId, userId);
+    if (!entidad.length) throw customError(ErrorCode.ENTIDAD_NOT_FOUND);
+
+    return await this.gastosRepository.getDeletedByEntidad(entidadId);
+  }
+
   async vincularUsuario(entityId, userId, email) {
     const entidad = await this.entidadesFinancierasRepository.getById(entityId, userId);
     if (!entidad.length) throw customError(ErrorCode.ENTIDAD_NOT_FOUND);
@@ -115,6 +139,10 @@ export class EntidadesFinancierasService {
     }
 
     const updated = await this.entidadesFinancierasRepository.vincularUsuario(entityId, userId, linkedUser.id);
+
+    const quien = linkedUser.email ? `${linkedUser.name} (${linkedUser.email})` : linkedUser.name;
+    await this.#log(entityId, MovementType.LINK, `Vinculada a ${quien}`);
+
     return { ...updated[0], linked_user_name: linkedUser.name, linked_user_email: linkedUser.email };
   }
 
@@ -122,7 +150,16 @@ export class EntidadesFinancierasService {
     const entidad = await this.entidadesFinancierasRepository.getById(entityId, userId);
     if (!entidad.length) throw customError(ErrorCode.ENTIDAD_NOT_FOUND);
 
+    const prev = entidad[0];
     const updated = await this.entidadesFinancierasRepository.desvincularUsuario(entityId, userId);
+
+    if (prev.linked_user_id) {
+      const quien = prev.linked_user_email
+        ? `${prev.linked_user_name} (${prev.linked_user_email})`
+        : (prev.linked_user_name ?? "un usuario");
+      await this.#log(entityId, MovementType.UNLINK, `Desvinculada de ${quien}`);
+    }
+
     return updated[0];
   }
 }

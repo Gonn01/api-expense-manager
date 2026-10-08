@@ -23,8 +23,10 @@ describe("GastosController", () => {
             getById: vi.fn(),
             update: vi.fn(),
             delete: vi.fn(),
-            pagarCuota: vi.fn(),
-            pagarCuotasLote: vi.fn(),
+            settleQuota: vi.fn(),
+            refundCuota: vi.fn(),
+            actualizarCategorias: vi.fn(),
+            settleQuotasLote: vi.fn(),
         };
         controller = new GastosController(service);
     });
@@ -37,31 +39,28 @@ describe("GastosController", () => {
             name: "Netflix",
             amount: 15000,
             number_of_quotas: 12,
-            currency_type: 0,
+            currency_type: "ARS",
             fixed_expense: false,
             image_url: null,
-            type: 0,
+            type: "EGRESO",
             payed_quotas: 0,
         };
 
-        it("responde 201 con el gasto creado y sus movimientos", async () => {
+        it("responde 201 con el gasto creado", async () => {
             const req = makeReq({ body: validBody });
             const res = makeRes();
             const mockGasto = [{ id: 10, name: "Netflix" }];
-            const mockMovements = [{ id: 1, type: "CREATION" }];
             service.crearGasto.mockResolvedValue(mockGasto);
-            service.obtenerMovimientosPorGasto.mockResolvedValue(mockMovements);
 
             await controller.crear(req, res);
 
             expect(service.crearGasto).toHaveBeenCalledWith(
-                1, "Netflix", 15000, 12, 0, false, null, 0, 0
+                1, "Netflix", 15000, 12, "ARS", false, null, "EGRESO", 1, 0, undefined, undefined, undefined
             );
-            expect(service.obtenerMovimientosPorGasto).toHaveBeenCalledWith(10);
             expect(res.status).toHaveBeenCalledWith(201);
             expect(res.json).toHaveBeenCalledWith({
                 message: "Gasto creado con éxito",
-                data: { id: 10, name: "Netflix", movements: mockMovements },
+                data: { id: 10, name: "Netflix" },
             });
         });
 
@@ -119,7 +118,7 @@ describe("GastosController", () => {
 
             await controller.getById(req, res);
 
-            expect(service.getById).toHaveBeenCalledWith("10");
+            expect(service.getById).toHaveBeenCalledWith("10", 1);
             expect(res.json).toHaveBeenCalledWith({ message: "Gasto encontrado", data: mockGasto });
         });
 
@@ -146,7 +145,7 @@ describe("GastosController", () => {
 
             await controller.update(req, res);
 
-            expect(service.update).toHaveBeenCalledWith("10", "Netflix Premium", 20000, null, false, 0, [1], 0, true);
+            expect(service.update).toHaveBeenCalledWith("10", 1, "Netflix Premium", 20000, null, false, 0, [1], 0, true);
             expect(res.json).toHaveBeenCalledWith({ message: "Gasto actualizado", data: mockUpdated });
         });
 
@@ -172,7 +171,7 @@ describe("GastosController", () => {
 
             await controller.delete(req, res);
 
-            expect(service.delete).toHaveBeenCalledWith("10", false);
+            expect(service.delete).toHaveBeenCalledWith("10", 1, false);
             expect(res.json).toHaveBeenCalledWith({ message: "Gasto eliminado correctamente", data: "10" });
         });
 
@@ -188,74 +187,114 @@ describe("GastosController", () => {
         });
     });
 
-    // ─── pagarCuota ───────────────────────────────────────────────────────────
+    // ─── settleQuota ───────────────────────────────────────────────────────────
 
-    describe("pagarCuota", () => {
+    describe("settleQuota", () => {
         it("responde con el resultado del pago de cuota", async () => {
             const req = makeReq({ params: { id: "10" } });
             const res = makeRes();
             const mockResult = [{ id: 10, payed_quotas: 1 }];
-            service.pagarCuota.mockResolvedValue(mockResult);
+            service.settleQuota.mockResolvedValue(mockResult);
 
-            await controller.pagarCuota(req, res);
+            await controller.settleQuota(req, res);
 
-            expect(service.pagarCuota).toHaveBeenCalledWith("10", 1);
+            expect(service.settleQuota).toHaveBeenCalledWith("10", 1, { direct: false });
             expect(res.json).toHaveBeenCalledWith({ message: "Cuota pagada con éxito", data: mockResult[0] });
         });
 
         it("responde 500 cuando el servicio lanza un error", async () => {
             const req = makeReq({ params: { id: "10" } });
             const res = makeRes();
-            service.pagarCuota.mockRejectedValue(new Error("DB error"));
+            service.settleQuota.mockRejectedValue(new Error("DB error"));
 
-            await controller.pagarCuota(req, res);
+            await controller.settleQuota(req, res);
 
             expect(res.status).toHaveBeenCalledWith(500);
             expect(res.json).toHaveBeenCalledWith({ error: "Error en el servidor" });
         });
     });
 
-    // ─── pagarCuotasLote ─────────────────────────────────────────────────────
+    // ─── refundCuota ──────────────────────────────────────────────────────────
 
-    describe("pagarCuotasLote", () => {
+    describe("refundCuota", () => {
+        it("revierte la cuota en nombre del usuario de la sesión", async () => {
+            const req = makeReq({ params: { id: "10" } });
+            const res = makeRes();
+            const mockResult = [{ id: 10, payed_quotas: 0 }];
+            service.refundCuota.mockResolvedValue(mockResult);
+
+            await controller.refundCuota(req, res);
+
+            expect(service.refundCuota).toHaveBeenCalledWith("10", 1);
+            expect(res.json).toHaveBeenCalledWith({ message: "Cuota revertida con éxito", data: mockResult[0] });
+        });
+    });
+
+    // ─── actualizarCategorias ─────────────────────────────────────────────────
+
+    describe("actualizarCategorias", () => {
+        it("actualiza las categorías en nombre del usuario de la sesión", async () => {
+            const req = makeReq({ params: { id: "10" }, body: { category_ids: [1, 2] } });
+            const res = makeRes();
+            service.actualizarCategorias.mockResolvedValue([{ id: 1 }, { id: 2 }]);
+
+            await controller.actualizarCategorias(req, res);
+
+            expect(service.actualizarCategorias).toHaveBeenCalledWith("10", 1, [1, 2]);
+        });
+
+        it("responde 400 cuando category_ids no es un array", async () => {
+            const req = makeReq({ params: { id: "10" }, body: { category_ids: "1" } });
+            const res = makeRes();
+
+            await controller.actualizarCategorias(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(service.actualizarCategorias).not.toHaveBeenCalled();
+        });
+    });
+
+    // ─── settleQuotasLote ─────────────────────────────────────────────────────
+
+    describe("settleQuotasLote", () => {
         it("responde con los gastos actualizados en lote", async () => {
             const req = makeReq({ body: { purchase_ids: [1, 2, 3] } });
             const res = makeRes();
             const mockUpdated = [{ id: 1 }, { id: 2 }, { id: 3 }];
-            service.pagarCuotasLote.mockResolvedValue(mockUpdated);
+            service.settleQuotasLote.mockResolvedValue(mockUpdated);
 
-            await controller.pagarCuotasLote(req, res);
+            await controller.settleQuotasLote(req, res);
 
-            expect(service.pagarCuotasLote).toHaveBeenCalledWith([1, 2, 3], 1);
+            expect(service.settleQuotasLote).toHaveBeenCalledWith([1, 2, 3], 1);
         });
 
         it("responde 400 cuando purchase_ids no es un array", async () => {
             const req = makeReq({ body: { purchase_ids: "1,2,3" } });
             const res = makeRes();
 
-            await controller.pagarCuotasLote(req, res);
+            await controller.settleQuotasLote(req, res);
 
             expect(res.status).toHaveBeenCalledWith(400);
             expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: "Debe enviar 'purchase_ids' como array no vacío", code: "VALIDATION_ERROR" }));
-            expect(service.pagarCuotasLote).not.toHaveBeenCalled();
+            expect(service.settleQuotasLote).not.toHaveBeenCalled();
         });
 
         it("responde 400 cuando purchase_ids es un array vacío", async () => {
             const req = makeReq({ body: { purchase_ids: [] } });
             const res = makeRes();
 
-            await controller.pagarCuotasLote(req, res);
+            await controller.settleQuotasLote(req, res);
 
             expect(res.status).toHaveBeenCalledWith(400);
             expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: "Debe enviar 'purchase_ids' como array no vacío", code: "VALIDATION_ERROR" }));
-            expect(service.pagarCuotasLote).not.toHaveBeenCalled();
+            expect(service.settleQuotasLote).not.toHaveBeenCalled();
         });
 
         it("responde 400 cuando falta purchase_ids", async () => {
             const req = makeReq({ body: {} });
             const res = makeRes();
 
-            await controller.pagarCuotasLote(req, res);
+            await controller.settleQuotasLote(req, res);
 
             expect(res.status).toHaveBeenCalledWith(400);
             expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: "Debe enviar 'purchase_ids' como array no vacío", code: "VALIDATION_ERROR" }));
@@ -264,9 +303,9 @@ describe("GastosController", () => {
         it("responde 500 cuando el servicio lanza un error", async () => {
             const req = makeReq({ body: { purchase_ids: [1, 2] } });
             const res = makeRes();
-            service.pagarCuotasLote.mockRejectedValue(new Error("DB error"));
+            service.settleQuotasLote.mockRejectedValue(new Error("DB error"));
 
-            await controller.pagarCuotasLote(req, res);
+            await controller.settleQuotasLote(req, res);
 
             expect(res.status).toHaveBeenCalledWith(500);
             expect(res.json).toHaveBeenCalledWith({ error: "Error en el servidor" });

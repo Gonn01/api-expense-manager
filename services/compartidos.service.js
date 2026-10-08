@@ -105,6 +105,11 @@ export class CompartidosService {
         await Promise.all([
             this.gastosRepository.updateStatus(gasto.shared_from_id, ExpenseStatus.ACTIVE),
             this.movementsRepository.createGastoLog(gastoId, MovementType.CREATION),
+            this.movementsRepository.createEntidadLog(
+                entityId,
+                MovementType.PURCHASE_CREATED,
+                `Gasto compartido aceptado: "${gasto.name}"`,
+            ).catch(() => {}),
             notif && triggerCompartidos(notif.sender_user_id, 'compartido.aprobado', {
                 gastoId,
                 entityId: notif.sender_entity_id,

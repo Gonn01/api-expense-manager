@@ -3,7 +3,7 @@ import { GastosRepository } from "../repositories/gastos.repository.js";
 import { MovementsRepository } from "../repositories/movements.repository.js";
 import { EntidadesFinancierasRepository } from "../repositories/entidades-financieras.repository.js";
 import { CategoriasRepository } from "../repositories/categorias.repository.js";
-import { ReconcileRepository } from "../repositories/reconcile.repository.js";
+import { SettlementRepository } from "../repositories/settlement.repository.js";
 import { GastosService } from "../services/gastos.service.js";
 
 export function makeGastosController() {
@@ -11,14 +11,14 @@ export function makeGastosController() {
     const movementsRepository = new MovementsRepository();
     const entidadesFinancierasRepository = new EntidadesFinancierasRepository();
     const categoriasRepository = new CategoriasRepository();
-    const reconcileRepository = new ReconcileRepository();
+    const settlementRepository = new SettlementRepository();
 
     const gastosService = new GastosService({
         gastosRepository,
         movementsRepository,
         entidadesFinancierasRepository,
         categoriasRepository,
-        reconcileRepository
+        settlementRepository
     });
 
     const gastosController = new GastosController(gastosService);

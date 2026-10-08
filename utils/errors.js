@@ -32,6 +32,7 @@ const CATALOG = Object.freeze({
     GASTO_NO_PENDIENTE_APROBACION: { status: HttpStatus.BAD_REQUEST, message: "El gasto no está pendiente de aprobación" },
     GASTO_COMPARTIDO_NO_ASOCIADO: { status: HttpStatus.BAD_REQUEST, message: "No hay gasto compartido asociado" },
     GASTO_COMPARTIDO_NO_RECHAZADO: { status: HttpStatus.BAD_REQUEST, message: "El gasto compartido no está rechazado" },
+    GASTO_YA_SALDADO: { status: HttpStatus.CONFLICT, message: "El gasto ya tiene todas sus cuotas pagas" },
     SIN_CUOTAS_PARA_REVERTIR: { status: HttpStatus.BAD_REQUEST, message: "No hay cuotas pagadas para revertir" },
     LISTA_IDS_INVALIDA: { status: HttpStatus.BAD_REQUEST, message: "La lista de IDs de compra es inválida." },
 
@@ -58,8 +59,8 @@ const CATALOG = Object.freeze({
     // ─── Categorías ──────────────────────────────────────────────────────────
     CATEGORIA_NOT_FOUND: { status: HttpStatus.NOT_FOUND, message: "Categoría no encontrada" },
 
-    // ─── Modo "hacer cuentas" (reconcile) ────────────────────────────────────
-    RECONCILE_REQUIRED: { status: HttpStatus.CONFLICT, message: 'Activá el modo "Hacer cuentas" para registrar pagos.' },
+    // ─── Modo "hacer cuentas" (settlement) ────────────────────────────────────
+    SETTLEMENT_REQUIRED: { status: HttpStatus.CONFLICT, message: 'Activá el modo "Hacer cuentas" para registrar pagos.' },
     NO_OPEN_SESSION: { status: HttpStatus.BAD_REQUEST, message: "No hay una sesión de cuentas abierta" },
     SNAPSHOT_NOT_FOUND: { status: HttpStatus.NOT_FOUND, message: "Snapshot no encontrado" },
 });

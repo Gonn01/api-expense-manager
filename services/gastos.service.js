@@ -1,38 +1,95 @@
 import { MovementType, ExpenseStatus, ExpenseType } from "../utils/enums.js";
 import { triggerCompartidos } from "../utils/pusher.js";
 import { customError, ErrorCode } from "../utils/errors.js";
+import { logRed } from "../utils/logs_custom.js";
 
 export class GastosService {
-    constructor({ gastosRepository, movementsRepository, entidadesFinancierasRepository, categoriasRepository, reconcileRepository }) {
+    constructor({ gastosRepository, movementsRepository, entidadesFinancierasRepository, categoriasRepository, settlementRepository }) {
         this.gastosRepository = gastosRepository;
         this.movementsRepository = movementsRepository;
         this.entidadesFinancierasRepository = entidadesFinancierasRepository;
         this.categoriasRepository = categoriasRepository;
-        this.reconcileRepository = reconcileRepository;
+        this.settlementRepository = settlementRepository;
+    }
+
+    // Registra un movimiento en el historial de una entidad. Best-effort.
+    async #logEntidad(entidadId, type, detail = null) {
+        if (!entidadId) return;
+        try {
+            await this.movementsRepository.createEntidadLog(entidadId, type, detail);
+        } catch (err) {
+            logRed(`[historial entidad ${entidadId}] no se pudo registrar ${type}: ${err.message}`);
+        }
     }
 
     // "Modo hacer cuentas": el pago en lote (dashboard) exige una sesión abierta.
-    // Devuelve la sesión abierta o tira RECONCILE_REQUIRED.
-    async requireReconcileSession(userId) {
-        if (!this.reconcileRepository) return null;
-        if (!userId) throw customError(ErrorCode.RECONCILE_REQUIRED);
-        const session = await this.reconcileRepository.getOpenSession(userId);
-        if (!session) throw customError(ErrorCode.RECONCILE_REQUIRED);
+    // Devuelve la sesión abierta o tira SETTLEMENT_REQUIRED.
+    async requireSettlementSession(userId) {
+        if (!this.settlementRepository) return null;
+        if (!userId) throw customError(ErrorCode.SETTLEMENT_REQUIRED);
+        const session = await this.settlementRepository.getOpenSession(userId);
+        if (!session) throw customError(ErrorCode.SETTLEMENT_REQUIRED);
         return session;
     }
 
     // Devuelve la sesión de cuentas abierta del usuario, o null si no hay.
-    async getOpenReconcileSession(userId) {
-        if (!this.reconcileRepository || !userId) return null;
-        return await this.reconcileRepository.getOpenSession(userId);
+    async getOpenSettlementSession(userId) {
+        if (!this.settlementRepository || !userId) return null;
+        return await this.settlementRepository.getOpenSession(userId);
     }
 
-    async getById(id) {
-        const row = await this.gastosRepository.getById(id);
+    // ¿El gasto es del usuario? Lo es si su entidad le pertenece. `allowReceiver`
+    // suma el caso de la copia compartida todavía sin entidad (pendiente de
+    // aprobación o rechazada), que es de quien la recibió: solo para lectura.
+    async #assertOwner(gasto, userId, { allowReceiver = false } = {}) {
+        if (userId == null) throw customError(ErrorCode.NO_AUTORIZADO);
 
-        if (row.length === 0) {
-            throw customError(ErrorCode.GASTO_NOT_FOUND);
+        if (gasto.financial_entity_id) {
+            const entidad = await this.entidadesFinancierasRepository.getById(
+                gasto.financial_entity_id,
+                userId,
+            );
+            if (entidad.length) return;
+        } else if (allowReceiver && String(gasto.receiver_user_id) === String(userId)) {
+            return;
         }
+
+        throw customError(ErrorCode.NO_AUTORIZADO);
+    }
+
+    // Trae un gasto no eliminado verificando que sea del usuario.
+    async #getOwned(id, userId, options) {
+        const rows = await this.gastosRepository.getById(id);
+        if (rows.length === 0) throw customError(ErrorCode.GASTO_NOT_FOUND);
+        await this.#assertOwner(rows[0], userId, options);
+        return rows;
+    }
+
+    // Verifica en una sola consulta que todos los gastos sean del usuario.
+    // Lo usa SettlementService antes de marcar gastos en la sesión.
+    async assertOwnedAll(ids, userId) {
+        if (userId == null) throw customError(ErrorCode.NO_AUTORIZADO);
+
+        const wanted = [...new Set(ids.map(String))];
+        if (wanted.length === 0) return;
+        // Un id que no es un entero no puede ser un gasto del usuario (y no
+        // debe llegar a la consulta).
+        if (wanted.some((id) => !/^\d+$/.test(id))) throw customError(ErrorCode.NO_AUTORIZADO);
+
+        const rows = await this.gastosRepository.getOwnedIds(wanted, userId);
+        const owned = new Set(rows.map((r) => String(r.id)));
+        if (wanted.some((id) => !owned.has(id))) throw customError(ErrorCode.NO_AUTORIZADO);
+    }
+
+    // Un gasto no fijo no admite más pagos que su cantidad de cuotas.
+    #assertQuotasRestantes(gasto) {
+        if (!gasto.fixed_expense && Number(gasto.payed_quotas) >= Number(gasto.number_of_quotas)) {
+            throw customError(ErrorCode.GASTO_YA_SALDADO);
+        }
+    }
+
+    async getById(id, userId) {
+        const row = await this.#getOwned(id, userId, { allowReceiver: true });
 
         const [movements, categories] = await Promise.all([
             this.movementsRepository.getMovementsByGasto(id),
@@ -44,9 +101,8 @@ export class GastosService {
         return row[0];
     }
 
-    async update(id, name, amount, image_url, fixed_expense, type, category_ids, payed_quotas, apply_to_linked = false) {
-        const current = await this.gastosRepository.getById(id);
-        if (!current.length) throw customError(ErrorCode.GASTO_NOT_FOUND);
+    async update(id, userId, name, amount, image_url, fixed_expense, type, category_ids, payed_quotas, apply_to_linked = false) {
+        const current = await this.#getOwned(id, userId);
 
         const normalizedType = type != null ? String(type).toUpperCase() : current[0].type;
 
@@ -98,6 +154,15 @@ export class GastosService {
             await this.categoriasRepository.setCategoriasForGasto(id, category_ids);
         }
 
+        const oldName = current[0].name;
+        if (name !== undefined && name !== oldName) {
+            await this.#logEntidad(
+                current[0].financial_entity_id,
+                MovementType.EDITED,
+                `Gasto renombrado: "${oldName}" → "${name}"`,
+            );
+        }
+
         // Propagar cambios al movimiento espejo (nombre / monto / imagen / gasto fijo
         // y categorías). El tipo del espejo se mantiene opuesto al del original.
         const linkedId = current[0].linked_purchase_id;
@@ -109,14 +174,21 @@ export class GastosService {
             if (Array.isArray(category_ids)) {
                 await this.categoriasRepository.setCategoriasForGasto(linkedId, category_ids);
             }
+            if (name !== undefined && name !== oldName) {
+                await this.#logEntidad(
+                    current[0].linked_financial_entity_id,
+                    MovementType.EDITED,
+                    `Gasto renombrado: "${oldName}" → "${name}"`,
+                );
+            }
         }
 
         return row;
     }
 
-    async delete(id, delete_linked = false) {
-        const current = await this.gastosRepository.getById(id);
-        const linkedId = current[0]?.linked_purchase_id;
+    async delete(id, userId, delete_linked = false) {
+        const current = await this.#getOwned(id, userId);
+        const linkedId = current[0].linked_purchase_id;
 
         const row = await this.gastosRepository.delete(id);
 
@@ -125,10 +197,20 @@ export class GastosService {
         }
 
         await this.movementsRepository.createGastoLog(id, MovementType.DELETE);
+        await this.#logEntidad(
+            current[0].financial_entity_id,
+            MovementType.DELETE,
+            `Gasto eliminado: "${current[0].name}"`,
+        );
 
         if (linkedId) {
             if (delete_linked) {
                 await this.gastosRepository.delete(linkedId);
+                await this.#logEntidad(
+                    current[0].linked_financial_entity_id,
+                    MovementType.DELETE,
+                    `Gasto eliminado: "${current[0].linked_name ?? current[0].name}"`,
+                );
             } else {
                 // Rompemos el vínculo para no dejar el espejo apuntando a una fila borrada.
                 await this.gastosRepository.unlink(id);
@@ -138,16 +220,24 @@ export class GastosService {
         return row[0];
     }
 
-    async restaurar(id) {
-        const row = await this.gastosRepository.restaurar(id);
+    // Restaura un gasto soft-deleted. Verifica que su entidad sea del usuario.
+    async restaurar(id, userId) {
+        const [gasto] = await this.gastosRepository.getByIdIncludingDeleted(id);
+        if (!gasto) throw customError(ErrorCode.GASTO_NOT_FOUND);
 
-        if (!row || row.length === 0) {
-            throw customError(ErrorCode.GASTO_NOT_FOUND);
-        }
+        await this.#assertOwner(gasto, userId);
+
+        const [restored] = await this.gastosRepository.restore(id);
+        if (!restored) throw customError(ErrorCode.GASTO_NOT_FOUND);
 
         await this.movementsRepository.createGastoLog(id, MovementType.RESTORE);
+        await this.#logEntidad(
+            gasto.financial_entity_id,
+            MovementType.RESTORE,
+            `Gasto restaurado: "${gasto.name}"`,
+        );
 
-        return await this.getById(id);
+        return await this.getById(id, userId);
     }
 
     // Crea una compra + su log de CREATION + un log de PAYMENT por cada cuota
@@ -244,6 +334,12 @@ export class GastosService {
 
         const gastoId = rows[0].id;
 
+        await this.#logEntidad(
+            financial_entity_id,
+            MovementType.PURCHASE_CREATED,
+            `Gasto creado: "${name}"`,
+        );
+
         // Si la entidad tiene un usuario vinculado, crear la copia pendiente para ese usuario
         if (entidad[0].linked_user_id) {
             await triggerCompartidos(entidad[0].linked_user_id, 'compartido.nuevo', { gastoId });
@@ -288,6 +384,12 @@ export class GastosService {
 
             await this.gastosRepository.linkPurchases(gastoId, mirror[0].id);
             rows[0].linked_purchase_id = mirror[0].id;
+
+            await this.#logEntidad(
+                payment_entity_id,
+                MovementType.PURCHASE_CREATED,
+                `Gasto espejo creado: "${name}"`,
+            );
         }
 
         // Postergar: el gasto no entra en la sesión de cuentas actual/próxima.
@@ -300,34 +402,33 @@ export class GastosService {
     }
 
     async postergarGasto(id, userId, postponed) {
-        const current = await this.gastosRepository.getById(id);
-        if (!current.length) throw customError(ErrorCode.GASTO_NOT_FOUND);
+        const current = await this.#getOwned(id, userId);
 
-        const entidad = await this.entidadesFinancierasRepository.getById(
-            current[0].financial_entity_id,
-            userId,
-        );
-        if (!entidad.length) throw customError(ErrorCode.NO_AUTORIZADO);
+        const value = Boolean(postponed);
+        const [updated] = await this.gastosRepository.setPostponed(id, value);
 
-        const [updated] = await this.gastosRepository.setPostponed(id, Boolean(postponed));
+        if (value !== current[0].is_postponed) {
+            const type = value ? MovementType.POSTPONED : MovementType.UNPOSTPONED;
+            await this.movementsRepository.createGastoLog(id, type);
+            await this.#logEntidad(
+                current[0].financial_entity_id,
+                type,
+                `${value ? "Postergación agregada" : "Postergación quitada"}: "${current[0].name}"`,
+            );
+        }
+
         return updated;
     }
 
     async marcarFavorito(id, userId, favorite) {
-        const current = await this.gastosRepository.getById(id);
-        if (!current.length) throw customError(ErrorCode.GASTO_NOT_FOUND);
-
-        const entidad = await this.entidadesFinancierasRepository.getById(
-            current[0].financial_entity_id,
-            userId,
-        );
-        if (!entidad.length) throw customError(ErrorCode.NO_AUTORIZADO);
+        await this.#getOwned(id, userId);
 
         const [updated] = await this.gastosRepository.setFavorite(id, Boolean(favorite));
         return updated;
     }
 
-    async actualizarCategorias(gastoId, categoryIds) {
+    async actualizarCategorias(gastoId, userId, categoryIds) {
+        await this.#getOwned(gastoId, userId);
         await this.categoriasRepository.setCategoriasForGasto(gastoId, categoryIds);
         return await this.categoriasRepository.getCategoriasByGasto(gastoId);
     }
@@ -337,38 +438,52 @@ export class GastosService {
      *
      *  - Con sesión de "hacer cuentas" abierta: DIFERIDO. Solo marca el gasto en
      *    la sesión; el pago real se registra al cerrarla (finishSession ->
-     *    efectuarPago) y queda en el historial del gasto y en el de cuentas.
-     *  - Sin sesión abierta: DIRECTO. Registra el movimiento ahora en el
-     *    historial del gasto. NO entra en ningún resumen de "hacer cuentas".
+     *    effectSettlement) y queda en el historial del gasto y en el de cuentas.
+     *  - Sin sesión abierta (o `direct: true`): DIRECTO. Registra el movimiento
+     *    ahora en el historial del gasto. NO entra en ningún resumen de cuentas.
+     *
+     * En ambos casos el gasto tiene que ser del usuario y tener cuotas sin pagar.
+     *
+     * `direct` lo usan las pantallas donde "hacer cuentas" no aplica (detalle de
+     * entidad): el pago siempre es directo, aunque haya una sesión abierta.
      */
-    async pagarCuota(purchase_id, userId) {
-        const rows = await this.gastosRepository.getById(purchase_id);
+    async settleQuota(purchase_id, userId, { direct = false } = {}) {
+        const rows = await this.#getOwned(purchase_id, userId);
+        this.#assertQuotasRestantes(rows[0]);
 
-        if (rows.length === 0) {
-            throw customError(ErrorCode.GASTO_NOT_FOUND);
-        }
-
-        if (rows[0].is_postponed) {
-            throw customError(ErrorCode.GASTO_POSTERGADO);
-        }
-
-        const session = await this.getOpenReconcileSession(userId);
+        const session = direct ? null : await this.getOpenSettlementSession(userId);
 
         if (session) {
-            await this.reconcileRepository.upsertItem(session.id, purchase_id, false);
+            // En "hacer cuentas" un gasto postergado queda deliberadamente afuera.
+            if (rows[0].is_postponed) {
+                throw customError(ErrorCode.GASTO_POSTERGADO);
+            }
+            await this.settlementRepository.upsertItem(session.id, purchase_id);
             return rows;
         }
 
-        await this.efectuarPago(rows[0], userId);
+        // Pago directo: si estaba postergado se levanta la postergación y queda
+        // registrado en el historial del gasto, justo antes del pago.
+        if (rows[0].is_postponed) {
+            await this.gastosRepository.setPostponed(purchase_id, false);
+            await this.movementsRepository.createGastoLog(purchase_id, MovementType.UNPOSTPONED);
+            await this.#logEntidad(
+                rows[0].financial_entity_id,
+                MovementType.UNPOSTPONED,
+                `Postergación quitada al registrar el pago: "${rows[0].name}"`,
+            );
+        }
+
+        await this.effectSettlement(rows[0], userId);
         return await this.gastosRepository.getById(purchase_id);
     }
 
     /**
      * Efectúa el pago real de una cuota: registra el movimiento PAYMENT (o
      * PENDING_PAYMENT si el gasto es compartido) y limpia el favorito si quedó
-     * saldado. Lo usa ReconcileService al cerrar la sesión de cuentas.
+     * saldado. Lo usa SettlementService al cerrar la sesión de cuentas.
      */
-    async efectuarPago(gasto, userId, paymentDate = new Date()) {
+    async effectSettlement(gasto, userId, paymentDate = new Date()) {
         const result = await this.#registrarPagoOPendiente(gasto, userId, paymentDate);
         await this.gastosRepository.clearFavoriteIfFinalized(gasto.id);
         return result;
@@ -413,10 +528,8 @@ export class GastosService {
     // Revertir el último pago de una cuota. Siempre es directo: borra el
     // movimiento PAYMENT y registra un REFUND en el historial del gasto.
     // No interactúa con las sesiones de "hacer cuentas".
-    async refundCuota(purchase_id) {
-        const rows = await this.gastosRepository.getById(purchase_id);
-
-        if (rows.length === 0) throw customError(ErrorCode.GASTO_NOT_FOUND);
+    async refundCuota(purchase_id, userId) {
+        const rows = await this.#getOwned(purchase_id, userId);
         if (rows[0].payed_quotas === 0) throw customError(ErrorCode.SIN_CUOTAS_PARA_REVERTIR);
 
         const deleted = await this.movementsRepository.deleteLastPayment(purchase_id);
@@ -425,15 +538,15 @@ export class GastosService {
         return await this.gastosRepository.getById(purchase_id);
     }
 
-    async pagarCuotasLote(purchaseIds, userId) {
+    async settleQuotasLote(purchaseIds, userId) {
         if (!Array.isArray(purchaseIds) || purchaseIds.length === 0) {
             throw customError(ErrorCode.LISTA_IDS_INVALIDA);
         }
 
-        const session = await this.requireReconcileSession(userId);
+        const session = await this.requireSettlementSession(userId);
 
         // Diferido: solo marcamos cada gasto en la sesión. El pago real se
-        // efectúa al cerrarla (ReconcileService.finishSession -> efectuarPago).
+        // efectúa al cerrarla (SettlementService.finishSession -> effectSettlement).
         const updated = [];
         const failed = [];
 
@@ -447,6 +560,7 @@ export class GastosService {
                 }
 
                 const gasto = rows[0];
+                await this.#assertOwner(gasto, userId);
 
                 if (gasto.is_postponed) {
                     failed.push({ id, reason: "Gasto postergado para la próxima sesión" });
@@ -458,7 +572,7 @@ export class GastosService {
                     continue;
                 }
 
-                await this.reconcileRepository.upsertItem(session.id, id, false);
+                await this.settlementRepository.upsertItem(session.id, id);
                 updated.push(gasto);
             } catch (err) {
                 failed.push({ id, reason: err.message });

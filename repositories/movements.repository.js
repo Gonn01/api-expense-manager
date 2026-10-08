@@ -3,11 +3,11 @@ import { executeQuery } from "../db.js";
 export class MovementsRepository {
     async getMovementsByEntidad(entidadId) {
         return await executeQuery(
-            `SELECT id, created_at, movement_type
+            `SELECT id, created_at, movement_type, detail
              FROM financial_entities_movements
              WHERE financial_entity_id = $1
              ORDER BY created_at DESC`,
-            [entidadId], true
+            [entidadId]
         );
     }
 
@@ -17,23 +17,23 @@ export class MovementsRepository {
              FROM purchases_movements
              WHERE purchase_id = $1
              ORDER BY created_at DESC`,
-            [gastoId], true
+            [gastoId]
         );
     }
 
-    async createEntidadLog(entidadId, movementType) {
+    async createEntidadLog(entidadId, movementType, detail = null) {
         return await executeQuery(
-            `INSERT INTO financial_entities_movements (created_at, financial_entity_id, movement_type)
-             VALUES (NOW(), $1, $2)
+            `INSERT INTO financial_entities_movements (created_at, financial_entity_id, movement_type, detail)
+             VALUES (NOW(), $1, $2, $3)
              RETURNING *`,
-            [entidadId, movementType], true
+            [entidadId, movementType, detail]
         );
     }
 
     async deletePayments(gastoId) {
         return await executeQuery(
             `DELETE FROM purchases_movements WHERE purchase_id = $1 AND movement_type = 'PAYMENT'`,
-            [gastoId], true
+            [gastoId]
         );
     }
 
@@ -47,7 +47,7 @@ export class MovementsRepository {
                  LIMIT 1
              )
              RETURNING *`,
-            [gastoId], true
+            [gastoId]
         );
     }
 
@@ -56,7 +56,7 @@ export class MovementsRepository {
             `INSERT INTO purchases_movements (created_at, purchase_id, movement_type, amount, payment_date, created_by_user_id, detail)
              VALUES (NOW(), $1, $2, $3, $4, $5, $6)
              RETURNING *`,
-            [gastoId, movementType, amount, paymentDate, createdByUserId, detail], true
+            [gastoId, movementType, amount, paymentDate, createdByUserId, detail]
         );
     }
 
@@ -65,7 +65,7 @@ export class MovementsRepository {
             `SELECT id, purchase_id, movement_type, amount, payment_date, created_by_user_id
              FROM purchases_movements
              WHERE id = $1 AND movement_type = 'PENDING_PAYMENT'`,
-            [movementId], true
+            [movementId]
         );
     }
 
@@ -75,7 +75,7 @@ export class MovementsRepository {
              SET movement_type = 'PAYMENT'
              WHERE id = $1 AND movement_type = 'PENDING_PAYMENT'
              RETURNING *`,
-            [movementId], true
+            [movementId]
         );
     }
 
@@ -84,7 +84,7 @@ export class MovementsRepository {
             `DELETE FROM purchases_movements
              WHERE id = $1 AND movement_type = 'PENDING_PAYMENT'
              RETURNING *`,
-            [movementId], true
+            [movementId]
         );
     }
 }

@@ -7,7 +7,7 @@ export class UserRepository {
              SET preferred_currency = $2
              WHERE id = $1
              RETURNING id, name, email, avatar, firebase_user_id, preferred_currency, sueldo, sueldo_currency`,
-            [userId, preferredCurrency], true
+            [userId, preferredCurrency]
         );
     }
 
@@ -18,7 +18,7 @@ export class UserRepository {
                  sueldo_currency = COALESCE($3, sueldo_currency)
              WHERE id = $1
              RETURNING id, name, email, avatar, firebase_user_id, preferred_currency, sueldo, sueldo_currency`,
-            [userId, sueldo, sueldoCurrency ?? null], true
+            [userId, sueldo, sueldoCurrency ?? null]
         );
     }
 }

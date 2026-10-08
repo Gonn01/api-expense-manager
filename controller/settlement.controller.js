@@ -1,15 +1,15 @@
 import { handleError, badRequest } from "../utils/errors.js";
 import { HttpStatus } from "../utils/http_status.js";
 
-export class ReconcileController {
-    constructor(reconcileService) {
-        this.reconcileService = reconcileService;
+export class SettlementController {
+    constructor(settlementService) {
+        this.settlementService = settlementService;
     }
 
     getSession = async (req, res) => {
         try {
             const { userId } = req.session;
-            const data = await this.reconcileService.getSession(userId);
+            const data = await this.settlementService.getSession(userId);
             res.json({ message: "Sesión de cuentas", data });
         } catch (err) {
             return handleError(res, err);
@@ -19,7 +19,7 @@ export class ReconcileController {
     startSession = async (req, res) => {
         try {
             const { userId } = req.session;
-            const data = await this.reconcileService.startSession(userId);
+            const data = await this.settlementService.startSession(userId);
             res.status(data.alreadyOpen ? HttpStatus.OK : HttpStatus.CREATED).json({
                 message: data.alreadyOpen ? "Ya había una sesión abierta" : "Sesión de cuentas iniciada",
                 data,
@@ -32,7 +32,7 @@ export class ReconcileController {
     setItems = async (req, res) => {
         try {
             const { userId } = req.session;
-            const { purchase_id, purchase_ids, checked, auto } = req.body;
+            const { purchase_id, purchase_ids, checked } = req.body;
 
             if (typeof checked !== "boolean") {
                 return badRequest(res, "Debe enviar 'checked' (boolean)");
@@ -40,9 +40,9 @@ export class ReconcileController {
 
             let data;
             if (Array.isArray(purchase_ids)) {
-                data = await this.reconcileService.setItemsBulk(userId, purchase_ids, checked);
+                data = await this.settlementService.setItemsBulk(userId, purchase_ids, checked);
             } else if (purchase_id !== undefined && purchase_id !== null) {
-                data = await this.reconcileService.setItem(userId, Number(purchase_id), checked, Boolean(auto));
+                data = await this.settlementService.setItem(userId, Number(purchase_id), checked);
             } else {
                 return badRequest(res, "Debe enviar 'purchase_id' o 'purchase_ids'");
             }
@@ -56,7 +56,7 @@ export class ReconcileController {
     finishSession = async (req, res) => {
         try {
             const { userId } = req.session;
-            const snapshot = await this.reconcileService.finishSession(userId);
+            const snapshot = await this.settlementService.finishSession(userId);
             res.json({ message: "Cuentas cerradas", data: snapshot });
         } catch (err) {
             return handleError(res, err);
@@ -66,7 +66,7 @@ export class ReconcileController {
     discardSession = async (req, res) => {
         try {
             const { userId } = req.session;
-            const data = await this.reconcileService.discardSession(userId);
+            const data = await this.settlementService.discardSession(userId);
             res.json({ message: "Sesión descartada", data });
         } catch (err) {
             return handleError(res, err);
@@ -76,7 +76,7 @@ export class ReconcileController {
     listSnapshots = async (req, res) => {
         try {
             const { userId } = req.session;
-            const data = await this.reconcileService.listSnapshots(userId);
+            const data = await this.settlementService.listSnapshots(userId);
             res.json({ message: "Snapshots de cuentas", data });
         } catch (err) {
             return handleError(res, err);
@@ -87,7 +87,7 @@ export class ReconcileController {
         try {
             const { userId } = req.session;
             const { id } = req.params;
-            const data = await this.reconcileService.getSnapshot(userId, Number(id));
+            const data = await this.settlementService.getSnapshot(userId, Number(id));
             res.json({ message: "Snapshot de cuentas", data });
         } catch (err) {
             return handleError(res, err);
