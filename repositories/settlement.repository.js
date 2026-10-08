@@ -1,10 +1,10 @@
 import { executeQuery } from "../db.js";
 
-export class ReconcileRepository {
+export class SettlementRepository {
     async getOpenSession(userId) {
         const rows = await executeQuery(
             `SELECT id, user_id, status, started_at, finished_at
-             FROM reconcile_sessions
+             FROM settlement_sessions
              WHERE user_id = $1 AND status = 'OPEN'
              LIMIT 1`,
             [userId],
@@ -14,7 +14,7 @@ export class ReconcileRepository {
 
     async createSession(userId) {
         const rows = await executeQuery(
-            `INSERT INTO reconcile_sessions (user_id, status)
+            `INSERT INTO settlement_sessions (user_id, status)
              VALUES ($1, 'OPEN')
              RETURNING id, user_id, status, started_at, finished_at`,
             [userId],
@@ -25,7 +25,7 @@ export class ReconcileRepository {
     async getSessionItems(sessionId) {
         return await executeQuery(
             `SELECT purchase_id, quota_number, checked_at
-             FROM reconcile_session_items
+             FROM settlement_session_items
              WHERE session_id = $1
              ORDER BY checked_at ASC`,
             [sessionId],
@@ -43,12 +43,12 @@ export class ReconcileRepository {
         const quota = cnt[0]?.n ?? 0;
 
         return await executeQuery(
-            `INSERT INTO reconcile_session_items (session_id, purchase_id, quota_number)
+            `INSERT INTO settlement_session_items (session_id, purchase_id, quota_number)
              VALUES ($1, $2, $3)
              ON CONFLICT (session_id, purchase_id)
              DO UPDATE SET
                  quota_number = GREATEST(
-                     COALESCE(reconcile_session_items.quota_number, 0),
+                     COALESCE(settlement_session_items.quota_number, 0),
                      COALESCE(EXCLUDED.quota_number, 0)
                  )`,
             [sessionId, purchaseId, quota],
@@ -57,7 +57,7 @@ export class ReconcileRepository {
 
     async removeItem(sessionId, purchaseId) {
         return await executeQuery(
-            `DELETE FROM reconcile_session_items
+            `DELETE FROM settlement_session_items
              WHERE session_id = $1 AND purchase_id = $2`,
             [sessionId, purchaseId],
         );
@@ -91,7 +91,7 @@ export class ReconcileRepository {
                      ELSE p.amount END AS amount_per_quota,
                 fe.id   AS entity_id,
                 fe.name AS entity_name
-             FROM reconcile_session_items i
+             FROM settlement_session_items i
              JOIN purchases p ON p.id = i.purchase_id
              LEFT JOIN financial_entities fe ON fe.id = p.financial_entity_id
              WHERE i.session_id = $1
@@ -102,7 +102,7 @@ export class ReconcileRepository {
 
     async finishSession(sessionId) {
         return await executeQuery(
-            `UPDATE reconcile_sessions
+            `UPDATE settlement_sessions
              SET status = 'FINISHED', finished_at = NOW()
              WHERE id = $1`,
             [sessionId],
@@ -126,14 +126,14 @@ export class ReconcileRepository {
 
     async deleteSession(sessionId) {
         return await executeQuery(
-            `DELETE FROM reconcile_sessions WHERE id = $1`,
+            `DELETE FROM settlement_sessions WHERE id = $1`,
             [sessionId],
         );
     }
 
     async insertSnapshot({ userId, sessionId, month, startedAt, finishedAt, totals, items }) {
         const rows = await executeQuery(
-            `INSERT INTO reconcile_snapshots
+            `INSERT INTO settlement_snapshots
                 (user_id, session_id, month, started_at, finished_at, totals, items)
              VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
              RETURNING *`,
@@ -153,7 +153,7 @@ export class ReconcileRepository {
     async listSnapshots(userId) {
         return await executeQuery(
             `SELECT id, month, started_at, finished_at, totals, created_at
-             FROM reconcile_snapshots
+             FROM settlement_snapshots
              WHERE user_id = $1
              ORDER BY finished_at DESC`,
             [userId],
@@ -162,7 +162,7 @@ export class ReconcileRepository {
 
     async getSnapshot(userId, id) {
         const rows = await executeQuery(
-            `SELECT * FROM reconcile_snapshots WHERE id = $1 AND user_id = $2 LIMIT 1`,
+            `SELECT * FROM settlement_snapshots WHERE id = $1 AND user_id = $2 LIMIT 1`,
             [id, userId],
         );
         return rows[0] ?? null;

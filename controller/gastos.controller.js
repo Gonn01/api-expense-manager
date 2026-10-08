@@ -143,13 +143,13 @@ export class GastosController {
         }
     }
 
-    pagarCuota = async (req, res) => {
+    settleQuota = async (req, res) => {
         try {
             const { id } = req.params;
             const { userId } = req.session;
             const direct = req.body?.direct === true || req.body?.direct === "true";
 
-            const updated = await this.gastosService.pagarCuota(id, userId, { direct });
+            const updated = await this.gastosService.settleQuota(id, userId, { direct });
 
             res.json({
                 message: "Cuota pagada con éxito",
@@ -191,7 +191,7 @@ export class GastosController {
         }
     }
 
-    pagarCuotasLote = async (req, res) => {
+    settleQuotasLote = async (req, res) => {
         try {
             const { purchase_ids } = req.body;
             const { userId } = req.session;
@@ -200,7 +200,7 @@ export class GastosController {
                 return badRequest(res, "Debe enviar 'purchase_ids' como array no vacío");
             }
 
-            const { updated, failed } = await this.gastosService.pagarCuotasLote(purchase_ids, userId);
+            const { updated, failed } = await this.gastosService.settleQuotasLote(purchase_ids, userId);
 
             res.json({
                 message: "Lote procesado",

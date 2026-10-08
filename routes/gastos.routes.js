@@ -12,9 +12,9 @@ router.delete('/:id', controller.delete);
 router.put('/:id/categorias', controller.actualizarCategorias);
 router.put('/:id/postergar', controller.postergar);
 router.put('/:id/favorito', controller.favorito);
-router.post("/:id/pagar-cuota", controller.pagarCuota);
+router.post("/:id/settle-quota", controller.settleQuota);
 router.post("/:id/refund-cuota", controller.refundCuota);
 router.post("/:id/restaurar", controller.restaurar);
-router.post("/pagar-lote", controller.pagarCuotasLote);
+router.post("/settle-lote", controller.settleQuotasLote);
 
 export default router;

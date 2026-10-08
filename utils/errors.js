@@ -58,8 +58,8 @@ const CATALOG = Object.freeze({
     // ─── Categorías ──────────────────────────────────────────────────────────
     CATEGORIA_NOT_FOUND: { status: HttpStatus.NOT_FOUND, message: "Categoría no encontrada" },
 
-    // ─── Modo "hacer cuentas" (reconcile) ────────────────────────────────────
-    RECONCILE_REQUIRED: { status: HttpStatus.CONFLICT, message: 'Activá el modo "Hacer cuentas" para registrar pagos.' },
+    // ─── Modo "hacer cuentas" (settlement) ────────────────────────────────────
+    SETTLEMENT_REQUIRED: { status: HttpStatus.CONFLICT, message: 'Activá el modo "Hacer cuentas" para registrar pagos.' },
     NO_OPEN_SESSION: { status: HttpStatus.BAD_REQUEST, message: "No hay una sesión de cuentas abierta" },
     SNAPSHOT_NOT_FOUND: { status: HttpStatus.NOT_FOUND, message: "Snapshot no encontrado" },
 });

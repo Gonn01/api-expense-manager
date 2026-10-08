@@ -1,8 +1,8 @@
 import { Router } from "express";
-import { makeReconcileController } from "../factories/reconcile.factory.js";
+import { makeSettlementController } from "../factories/settlement.factory.js";
 
 const router = Router();
-const controller = makeReconcileController();
+const controller = makeSettlementController();
 
 router.get("/session", controller.getSession);
 router.post("/session", controller.startSession);

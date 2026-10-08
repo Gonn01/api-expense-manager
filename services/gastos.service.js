@@ -4,12 +4,12 @@ import { customError, ErrorCode } from "../utils/errors.js";
 import { logRed } from "../utils/logs_custom.js";
 
 export class GastosService {
-    constructor({ gastosRepository, movementsRepository, entidadesFinancierasRepository, categoriasRepository, reconcileRepository }) {
+    constructor({ gastosRepository, movementsRepository, entidadesFinancierasRepository, categoriasRepository, settlementRepository }) {
         this.gastosRepository = gastosRepository;
         this.movementsRepository = movementsRepository;
         this.entidadesFinancierasRepository = entidadesFinancierasRepository;
         this.categoriasRepository = categoriasRepository;
-        this.reconcileRepository = reconcileRepository;
+        this.settlementRepository = settlementRepository;
     }
 
     // Registra un movimiento en el historial de una entidad. Best-effort.
@@ -23,19 +23,19 @@ export class GastosService {
     }
 
     // "Modo hacer cuentas": el pago en lote (dashboard) exige una sesión abierta.
-    // Devuelve la sesión abierta o tira RECONCILE_REQUIRED.
-    async requireReconcileSession(userId) {
-        if (!this.reconcileRepository) return null;
-        if (!userId) throw customError(ErrorCode.RECONCILE_REQUIRED);
-        const session = await this.reconcileRepository.getOpenSession(userId);
-        if (!session) throw customError(ErrorCode.RECONCILE_REQUIRED);
+    // Devuelve la sesión abierta o tira SETTLEMENT_REQUIRED.
+    async requireSettlementSession(userId) {
+        if (!this.settlementRepository) return null;
+        if (!userId) throw customError(ErrorCode.SETTLEMENT_REQUIRED);
+        const session = await this.settlementRepository.getOpenSession(userId);
+        if (!session) throw customError(ErrorCode.SETTLEMENT_REQUIRED);
         return session;
     }
 
     // Devuelve la sesión de cuentas abierta del usuario, o null si no hay.
-    async getOpenReconcileSession(userId) {
-        if (!this.reconcileRepository || !userId) return null;
-        return await this.reconcileRepository.getOpenSession(userId);
+    async getOpenSettlementSession(userId) {
+        if (!this.settlementRepository || !userId) return null;
+        return await this.settlementRepository.getOpenSession(userId);
     }
 
     async getById(id) {
@@ -379,28 +379,28 @@ export class GastosService {
      *
      *  - Con sesión de "hacer cuentas" abierta: DIFERIDO. Solo marca el gasto en
      *    la sesión; el pago real se registra al cerrarla (finishSession ->
-     *    efectuarPago) y queda en el historial del gasto y en el de cuentas.
+     *    effectSettlement) y queda en el historial del gasto y en el de cuentas.
      *  - Sin sesión abierta (o `direct: true`): DIRECTO. Registra el movimiento
      *    ahora en el historial del gasto. NO entra en ningún resumen de cuentas.
      *
      * `direct` lo usan las pantallas donde "hacer cuentas" no aplica (detalle de
      * entidad): el pago siempre es directo, aunque haya una sesión abierta.
      */
-    async pagarCuota(purchase_id, userId, { direct = false } = {}) {
+    async settleQuota(purchase_id, userId, { direct = false } = {}) {
         const rows = await this.gastosRepository.getById(purchase_id);
 
         if (rows.length === 0) {
             throw customError(ErrorCode.GASTO_NOT_FOUND);
         }
 
-        const session = direct ? null : await this.getOpenReconcileSession(userId);
+        const session = direct ? null : await this.getOpenSettlementSession(userId);
 
         if (session) {
             // En "hacer cuentas" un gasto postergado queda deliberadamente afuera.
             if (rows[0].is_postponed) {
                 throw customError(ErrorCode.GASTO_POSTERGADO);
             }
-            await this.reconcileRepository.upsertItem(session.id, purchase_id);
+            await this.settlementRepository.upsertItem(session.id, purchase_id);
             return rows;
         }
 
@@ -416,16 +416,16 @@ export class GastosService {
             );
         }
 
-        await this.efectuarPago(rows[0], userId);
+        await this.effectSettlement(rows[0], userId);
         return await this.gastosRepository.getById(purchase_id);
     }
 
     /**
      * Efectúa el pago real de una cuota: registra el movimiento PAYMENT (o
      * PENDING_PAYMENT si el gasto es compartido) y limpia el favorito si quedó
-     * saldado. Lo usa ReconcileService al cerrar la sesión de cuentas.
+     * saldado. Lo usa SettlementService al cerrar la sesión de cuentas.
      */
-    async efectuarPago(gasto, userId, paymentDate = new Date()) {
+    async effectSettlement(gasto, userId, paymentDate = new Date()) {
         const result = await this.#registrarPagoOPendiente(gasto, userId, paymentDate);
         await this.gastosRepository.clearFavoriteIfFinalized(gasto.id);
         return result;
@@ -482,15 +482,15 @@ export class GastosService {
         return await this.gastosRepository.getById(purchase_id);
     }
 
-    async pagarCuotasLote(purchaseIds, userId) {
+    async settleQuotasLote(purchaseIds, userId) {
         if (!Array.isArray(purchaseIds) || purchaseIds.length === 0) {
             throw customError(ErrorCode.LISTA_IDS_INVALIDA);
         }
 
-        const session = await this.requireReconcileSession(userId);
+        const session = await this.requireSettlementSession(userId);
 
         // Diferido: solo marcamos cada gasto en la sesión. El pago real se
-        // efectúa al cerrarla (ReconcileService.finishSession -> efectuarPago).
+        // efectúa al cerrarla (SettlementService.finishSession -> effectSettlement).
         const updated = [];
         const failed = [];
 
@@ -515,7 +515,7 @@ export class GastosService {
                     continue;
                 }
 
-                await this.reconcileRepository.upsertItem(session.id, id);
+                await this.settlementRepository.upsertItem(session.id, id);
                 updated.push(gasto);
             } catch (err) {
                 failed.push({ id, reason: err.message });

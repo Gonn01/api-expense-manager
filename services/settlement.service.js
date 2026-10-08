@@ -39,34 +39,34 @@ function buildTotals(items) {
     return { byCurrency, entities: entities.size, items: items.length };
 }
 
-export class ReconcileService {
-    constructor({ reconcileRepository, gastosService }) {
-        this.reconcileRepository = reconcileRepository;
+export class SettlementService {
+    constructor({ settlementRepository, gastosService }) {
+        this.settlementRepository = settlementRepository;
         this.gastosService = gastosService;
     }
 
     async getSession(userId) {
-        const session = await this.reconcileRepository.getOpenSession(userId);
+        const session = await this.settlementRepository.getOpenSession(userId);
         if (!session) return null;
-        const items = await this.reconcileRepository.getSessionItems(session.id);
+        const items = await this.settlementRepository.getSessionItems(session.id);
         return { session, items };
     }
 
     async startSession(userId) {
-        const existing = await this.reconcileRepository.getOpenSession(userId);
+        const existing = await this.settlementRepository.getOpenSession(userId);
         if (existing) {
-            const items = await this.reconcileRepository.getSessionItems(existing.id);
+            const items = await this.settlementRepository.getSessionItems(existing.id);
             return { session: existing, items, alreadyOpen: true };
         }
-        const session = await this.reconcileRepository.createSession(userId);
+        const session = await this.settlementRepository.createSession(userId);
         return { session, items: [], alreadyOpen: false };
     }
 
     async setItem(userId, purchaseId, checked) {
         const session = await this.#requireOpenSession(userId);
-        if (checked) await this.reconcileRepository.upsertItem(session.id, purchaseId);
-        else await this.reconcileRepository.removeItem(session.id, purchaseId);
-        const items = await this.reconcileRepository.getSessionItems(session.id);
+        if (checked) await this.settlementRepository.upsertItem(session.id, purchaseId);
+        else await this.settlementRepository.removeItem(session.id, purchaseId);
+        const items = await this.settlementRepository.getSessionItems(session.id);
         return { session, items };
     }
 
@@ -74,22 +74,22 @@ export class ReconcileService {
         const session = await this.#requireOpenSession(userId);
         const ids = purchaseIds.map(Number).filter(Number.isFinite);
         if (ids.length) {
-            if (checked) await this.reconcileRepository.addItems(session.id, ids);
-            else await this.reconcileRepository.removeItems(session.id, ids);
+            if (checked) await this.settlementRepository.addItems(session.id, ids);
+            else await this.settlementRepository.removeItems(session.id, ids);
         }
-        const items = await this.reconcileRepository.getSessionItems(session.id);
+        const items = await this.settlementRepository.getSessionItems(session.id);
         return { session, items };
     }
 
     async finishSession(userId) {
-        const session = await this.reconcileRepository.getOpenSession(userId);
+        const session = await this.settlementRepository.getOpenSession(userId);
         if (!session) throw customError(ErrorCode.NO_OPEN_SESSION);
 
         // Pago diferido: marcar un gasto durante la sesión no lo paga. Recién al
         // cerrar la sesión se registran los pagos reales de todo lo marcado.
         await this.#effectMarkedPayments(userId, session.id);
 
-        const src = await this.reconcileRepository.getSnapshotSourceItems(session.id);
+        const src = await this.settlementRepository.getSnapshotSourceItems(session.id);
         const items = src.map((r) => ({
             purchase_id: r.purchase_id,
             name: r.name,
@@ -108,7 +108,7 @@ export class ReconcileService {
         const finishedAt = new Date();
         const month = finishedAt.toISOString().slice(0, 7);
 
-        const snapshot = await this.reconcileRepository.insertSnapshot({
+        const snapshot = await this.settlementRepository.insertSnapshot({
             userId,
             sessionId: session.id,
             month,
@@ -118,33 +118,33 @@ export class ReconcileService {
             items,
         });
 
-        await this.reconcileRepository.finishSession(session.id);
+        await this.settlementRepository.finishSession(session.id);
         // Los gastos postergados vuelven a estar disponibles para la próxima sesión.
-        await this.reconcileRepository.releasePostponedForUser(userId);
+        await this.settlementRepository.releasePostponedForUser(userId);
         return normalizeSnapshot(snapshot);
     }
 
     async discardSession(userId) {
-        const session = await this.reconcileRepository.getOpenSession(userId);
+        const session = await this.settlementRepository.getOpenSession(userId);
         if (!session) return { discarded: false };
-        await this.reconcileRepository.deleteSession(session.id);
+        await this.settlementRepository.deleteSession(session.id);
         return { discarded: true };
     }
 
     async listSnapshots(userId) {
-        const rows = await this.reconcileRepository.listSnapshots(userId);
+        const rows = await this.settlementRepository.listSnapshots(userId);
         return rows.map((r) => ({ ...r, totals: parseJson(r.totals, { byCurrency: {}, entities: 0, items: 0 }) }));
     }
 
     async getSnapshot(userId, id) {
-        const snapshot = await this.reconcileRepository.getSnapshot(userId, id);
+        const snapshot = await this.settlementRepository.getSnapshot(userId, id);
         if (!snapshot) throw customError(ErrorCode.SNAPSHOT_NOT_FOUND);
         return normalizeSnapshot(snapshot);
     }
 
     async #requireOpenSession(userId) {
-        const session = await this.reconcileRepository.getOpenSession(userId);
-        if (!session) throw customError(ErrorCode.RECONCILE_REQUIRED, { message: "No hay una sesión de cuentas abierta" });
+        const session = await this.settlementRepository.getOpenSession(userId);
+        if (!session) throw customError(ErrorCode.SETTLEMENT_REQUIRED, { message: "No hay una sesión de cuentas abierta" });
         return session;
     }
 
@@ -156,7 +156,7 @@ export class ReconcileService {
     async #effectMarkedPayments(userId, sessionId) {
         if (!this.gastosService) return;
 
-        const items = await this.reconcileRepository.getSessionItems(sessionId);
+        const items = await this.settlementRepository.getSessionItems(sessionId);
         const paymentDate = new Date();
 
         for (const it of items) {
@@ -164,7 +164,7 @@ export class ReconcileService {
             try {
                 gasto = await this.gastosService.getById(it.purchase_id);
             } catch {
-                await this.reconcileRepository.removeItem(sessionId, it.purchase_id);
+                await this.settlementRepository.removeItem(sessionId, it.purchase_id);
                 continue;
             }
 
@@ -173,16 +173,16 @@ export class ReconcileService {
                 Number(gasto.payed_quotas) >= Number(gasto.number_of_quotas);
 
             if (gasto.is_postponed || fullyPaid) {
-                await this.reconcileRepository.removeItem(sessionId, it.purchase_id);
+                await this.settlementRepository.removeItem(sessionId, it.purchase_id);
                 continue;
             }
 
             try {
-                await this.gastosService.efectuarPago(gasto, userId, paymentDate);
+                await this.gastosService.effectSettlement(gasto, userId, paymentDate);
                 // Releer quota_number ahora que el pago quedó registrado.
-                await this.reconcileRepository.upsertItem(sessionId, it.purchase_id);
+                await this.settlementRepository.upsertItem(sessionId, it.purchase_id);
             } catch (err) {
-                logRed(`[reconcile finish] no se pudo pagar la compra ${it.purchase_id}: ${err.message}`);
+                logRed(`[settlement finish] no se pudo pagar la compra ${it.purchase_id}: ${err.message}`);
             }
         }
     }

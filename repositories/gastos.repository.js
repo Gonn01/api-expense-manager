@@ -105,7 +105,7 @@ export class GastosRepository {
     return rows[0]?.count ?? 0;
   }
 
-  async pagarCuota(id) {
+  async settleQuota(id) {
     return await executeQuery(
       `SELECT p.*, ${CALCULATED_FIELDS}
        FROM purchases p
@@ -114,7 +114,7 @@ export class GastosRepository {
     );
   }
 
-  async pagarCuotasLote(ids) {
+  async settleQuotasLote(ids) {
     const updated = [];
     for (const id of ids) {
       const result = await executeQuery(
