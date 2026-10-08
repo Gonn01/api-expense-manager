@@ -24,7 +24,7 @@ describe("EntidadesFinancierasController", () => {
             crear: vi.fn(),
             actualizar: vi.fn(),
             eliminar: vi.fn(),
-            obtenerMovimientos: vi.fn(),
+            obtenerMovements: vi.fn(),
         };
         controller = new EntidadesFinancierasController(service);
     });
@@ -153,12 +153,12 @@ describe("EntidadesFinancierasController", () => {
             const mockEntidad = { id: 5, name: "Nuevo Nombre" };
             const mockMovements = [{ id: 1, type: "CREATION" }];
             service.actualizar.mockResolvedValue(mockEntidad);
-            service.obtenerMovimientos.mockResolvedValue(mockMovements);
+            service.obtenerMovements.mockResolvedValue(mockMovements);
 
             await controller.actualizar(req, res);
 
             expect(service.actualizar).toHaveBeenCalledWith("5", "Nuevo Nombre", 1);
-            expect(service.obtenerMovimientos).toHaveBeenCalledWith("5", 1);
+            expect(service.obtenerMovements).toHaveBeenCalledWith("5");
             expect(res.json).toHaveBeenCalledWith({
                 message: "Entidad financiera actualizada con éxito",
                 data: { ...mockEntidad, movements: mockMovements },

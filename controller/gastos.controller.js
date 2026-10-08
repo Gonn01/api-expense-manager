@@ -56,8 +56,9 @@ export class GastosController {
     getById = async (req, res) => {
         try {
             const { id } = req.params;
+            const { userId } = req.session;
 
-            const response = await this.gastosService.getById(id);
+            const response = await this.gastosService.getById(id, userId);
 
             res.json({
                 message: "Gasto encontrado",
@@ -72,8 +73,9 @@ export class GastosController {
         try {
             const { id } = req.params;
             const { name, amount, image_url, fixed_expense, type, category_ids, payed_quotas, apply_to_linked } = req.body;
+            const { userId } = req.session;
 
-            const response = await this.gastosService.update(id, name, amount, image_url, fixed_expense, type, category_ids, payed_quotas, apply_to_linked);
+            const response = await this.gastosService.update(id, userId, name, amount, image_url, fixed_expense, type, category_ids, payed_quotas, apply_to_linked);
 
             res.json({
                 message: "Gasto actualizado",
@@ -87,10 +89,11 @@ export class GastosController {
     delete = async (req, res) => {
         try {
             const { id } = req.params;
+            const { userId } = req.session;
             const deleteLinked = req.body?.delete_linked ?? req.query?.delete_linked;
             const shouldDeleteLinked = deleteLinked === true || deleteLinked === "true";
 
-            await this.gastosService.delete(id, shouldDeleteLinked);
+            await this.gastosService.delete(id, userId, shouldDeleteLinked);
 
             res.json({
                 message: "Gasto eliminado correctamente",
@@ -163,8 +166,9 @@ export class GastosController {
     refundCuota = async (req, res) => {
         try {
             const { id } = req.params;
+            const { userId } = req.session;
 
-            const updated = await this.gastosService.refundCuota(id);
+            const updated = await this.gastosService.refundCuota(id, userId);
 
             res.json({
                 message: "Cuota revertida con éxito",
@@ -179,12 +183,13 @@ export class GastosController {
         try {
             const { id } = req.params;
             const { category_ids } = req.body;
+            const { userId } = req.session;
 
             if (!Array.isArray(category_ids)) {
                 return badRequest(res, "Debe enviar 'category_ids' como array");
             }
 
-            const data = await this.gastosService.actualizarCategorias(id, category_ids);
+            const data = await this.gastosService.actualizarCategorias(id, userId, category_ids);
             res.json({ message: "Categorías actualizadas con éxito", data });
         } catch (err) {
             return handleError(res, err);

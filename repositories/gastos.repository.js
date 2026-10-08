@@ -25,6 +25,21 @@ export class GastosRepository {
     );
   }
 
+  // De una lista de ids, devuelve los que son gastos no eliminados de una
+  // entidad (no eliminada) del usuario.
+  async getOwnedIds(ids, userId) {
+    if (!ids.length) return [];
+    const placeholders = ids.map((_, i) => `$${i + 2}`).join(", ");
+    return await executeQuery(
+      `SELECT p.id
+       FROM purchases p
+       JOIN financial_entities fe ON fe.id = p.financial_entity_id
+       WHERE fe.user_id = $1 AND fe.deleted = false
+         AND p.deleted = false AND p.id IN (${placeholders})`,
+      [userId, ...ids]
+    );
+  }
+
   // Igual que getById pero sin filtrar por `deleted` (para restaurar).
   async getByIdIncludingDeleted(id) {
     return await executeQuery(

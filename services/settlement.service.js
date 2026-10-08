@@ -64,8 +64,14 @@ export class SettlementService {
 
     async setItem(userId, purchaseId, checked) {
         const session = await this.#requireOpenSession(userId);
-        if (checked) await this.settlementRepository.upsertItem(session.id, purchaseId);
-        else await this.settlementRepository.removeItem(session.id, purchaseId);
+        if (checked) {
+            // Solo se pueden marcar gastos propios. Desmarcar no se valida:
+            // únicamente saca la marca de la sesión del propio usuario.
+            await this.gastosService.assertOwnedAll([purchaseId], userId);
+            await this.settlementRepository.upsertItem(session.id, purchaseId);
+        } else {
+            await this.settlementRepository.removeItem(session.id, purchaseId);
+        }
         const items = await this.settlementRepository.getSessionItems(session.id);
         return { session, items };
     }
@@ -74,8 +80,12 @@ export class SettlementService {
         const session = await this.#requireOpenSession(userId);
         const ids = purchaseIds.map(Number).filter(Number.isFinite);
         if (ids.length) {
-            if (checked) await this.settlementRepository.addItems(session.id, ids);
-            else await this.settlementRepository.removeItems(session.id, ids);
+            if (checked) {
+                await this.gastosService.assertOwnedAll(ids, userId);
+                await this.settlementRepository.addItems(session.id, ids);
+            } else {
+                await this.settlementRepository.removeItems(session.id, ids);
+            }
         }
         const items = await this.settlementRepository.getSessionItems(session.id);
         return { session, items };
@@ -150,7 +160,7 @@ export class SettlementService {
 
     /**
      * Efectúa el pago real de cada gasto marcado en la sesión. Los gastos que
-     * ya no se pueden pagar (borrados, postergados o con todas las cuotas pagas)
+     * no se pueden pagar (borrados, ajenos, postergados o con todas las cuotas pagas)
      * se sacan de la sesión para que no ensucien el snapshot.
      */
     async #effectMarkedPayments(userId, sessionId) {
@@ -162,7 +172,7 @@ export class SettlementService {
         for (const it of items) {
             let gasto;
             try {
-                gasto = await this.gastosService.getById(it.purchase_id);
+                gasto = await this.gastosService.getById(it.purchase_id, userId);
             } catch {
                 await this.settlementRepository.removeItem(sessionId, it.purchase_id);
                 continue;

@@ -32,6 +32,7 @@ const CATALOG = Object.freeze({
     GASTO_NO_PENDIENTE_APROBACION: { status: HttpStatus.BAD_REQUEST, message: "El gasto no está pendiente de aprobación" },
     GASTO_COMPARTIDO_NO_ASOCIADO: { status: HttpStatus.BAD_REQUEST, message: "No hay gasto compartido asociado" },
     GASTO_COMPARTIDO_NO_RECHAZADO: { status: HttpStatus.BAD_REQUEST, message: "El gasto compartido no está rechazado" },
+    GASTO_YA_SALDADO: { status: HttpStatus.CONFLICT, message: "El gasto ya tiene todas sus cuotas pagas" },
     SIN_CUOTAS_PARA_REVERTIR: { status: HttpStatus.BAD_REQUEST, message: "No hay cuotas pagadas para revertir" },
     LISTA_IDS_INVALIDA: { status: HttpStatus.BAD_REQUEST, message: "La lista de IDs de compra es inválida." },
 

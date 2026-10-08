@@ -38,12 +38,58 @@ export class GastosService {
         return await this.settlementRepository.getOpenSession(userId);
     }
 
-    async getById(id) {
-        const row = await this.gastosRepository.getById(id);
+    // ¿El gasto es del usuario? Lo es si su entidad le pertenece. `allowReceiver`
+    // suma el caso de la copia compartida todavía sin entidad (pendiente de
+    // aprobación o rechazada), que es de quien la recibió: solo para lectura.
+    async #assertOwner(gasto, userId, { allowReceiver = false } = {}) {
+        if (userId == null) throw customError(ErrorCode.NO_AUTORIZADO);
 
-        if (row.length === 0) {
-            throw customError(ErrorCode.GASTO_NOT_FOUND);
+        if (gasto.financial_entity_id) {
+            const entidad = await this.entidadesFinancierasRepository.getById(
+                gasto.financial_entity_id,
+                userId,
+            );
+            if (entidad.length) return;
+        } else if (allowReceiver && String(gasto.receiver_user_id) === String(userId)) {
+            return;
         }
+
+        throw customError(ErrorCode.NO_AUTORIZADO);
+    }
+
+    // Trae un gasto no eliminado verificando que sea del usuario.
+    async #getOwned(id, userId, options) {
+        const rows = await this.gastosRepository.getById(id);
+        if (rows.length === 0) throw customError(ErrorCode.GASTO_NOT_FOUND);
+        await this.#assertOwner(rows[0], userId, options);
+        return rows;
+    }
+
+    // Verifica en una sola consulta que todos los gastos sean del usuario.
+    // Lo usa SettlementService antes de marcar gastos en la sesión.
+    async assertOwnedAll(ids, userId) {
+        if (userId == null) throw customError(ErrorCode.NO_AUTORIZADO);
+
+        const wanted = [...new Set(ids.map(String))];
+        if (wanted.length === 0) return;
+        // Un id que no es un entero no puede ser un gasto del usuario (y no
+        // debe llegar a la consulta).
+        if (wanted.some((id) => !/^\d+$/.test(id))) throw customError(ErrorCode.NO_AUTORIZADO);
+
+        const rows = await this.gastosRepository.getOwnedIds(wanted, userId);
+        const owned = new Set(rows.map((r) => String(r.id)));
+        if (wanted.some((id) => !owned.has(id))) throw customError(ErrorCode.NO_AUTORIZADO);
+    }
+
+    // Un gasto no fijo no admite más pagos que su cantidad de cuotas.
+    #assertQuotasRestantes(gasto) {
+        if (!gasto.fixed_expense && Number(gasto.payed_quotas) >= Number(gasto.number_of_quotas)) {
+            throw customError(ErrorCode.GASTO_YA_SALDADO);
+        }
+    }
+
+    async getById(id, userId) {
+        const row = await this.#getOwned(id, userId, { allowReceiver: true });
 
         const [movements, categories] = await Promise.all([
             this.movementsRepository.getMovementsByGasto(id),
@@ -55,9 +101,8 @@ export class GastosService {
         return row[0];
     }
 
-    async update(id, name, amount, image_url, fixed_expense, type, category_ids, payed_quotas, apply_to_linked = false) {
-        const current = await this.gastosRepository.getById(id);
-        if (!current.length) throw customError(ErrorCode.GASTO_NOT_FOUND);
+    async update(id, userId, name, amount, image_url, fixed_expense, type, category_ids, payed_quotas, apply_to_linked = false) {
+        const current = await this.#getOwned(id, userId);
 
         const [row] = await this.gastosRepository.update(id, name, amount, image_url, fixed_expense, type);
 
@@ -110,9 +155,9 @@ export class GastosService {
         return row;
     }
 
-    async delete(id, delete_linked = false) {
-        const current = await this.gastosRepository.getById(id);
-        const linkedId = current[0]?.linked_purchase_id;
+    async delete(id, userId, delete_linked = false) {
+        const current = await this.#getOwned(id, userId);
+        const linkedId = current[0].linked_purchase_id;
 
         const row = await this.gastosRepository.delete(id);
 
@@ -148,13 +193,7 @@ export class GastosService {
         const [gasto] = await this.gastosRepository.getByIdIncludingDeleted(id);
         if (!gasto) throw customError(ErrorCode.GASTO_NOT_FOUND);
 
-        if (gasto.financial_entity_id) {
-            const entidad = await this.entidadesFinancierasRepository.getById(
-                gasto.financial_entity_id,
-                userId,
-            );
-            if (!entidad.length) throw customError(ErrorCode.NO_AUTORIZADO);
-        }
+        await this.#assertOwner(gasto, userId);
 
         const [restored] = await this.gastosRepository.restore(id);
         if (!restored) throw customError(ErrorCode.GASTO_NOT_FOUND);
@@ -165,7 +204,7 @@ export class GastosService {
             `Gasto restaurado: "${gasto.name}"`,
         );
 
-        return await this.getById(id);
+        return await this.getById(id, userId);
     }
 
     // Crea una compra + su log de CREATION + un log de PAYMENT por cada cuota
@@ -330,14 +369,7 @@ export class GastosService {
     }
 
     async postergarGasto(id, userId, postponed) {
-        const current = await this.gastosRepository.getById(id);
-        if (!current.length) throw customError(ErrorCode.GASTO_NOT_FOUND);
-
-        const entidad = await this.entidadesFinancierasRepository.getById(
-            current[0].financial_entity_id,
-            userId,
-        );
-        if (!entidad.length) throw customError(ErrorCode.NO_AUTORIZADO);
+        const current = await this.#getOwned(id, userId);
 
         const value = Boolean(postponed);
         const [updated] = await this.gastosRepository.setPostponed(id, value);
@@ -356,20 +388,14 @@ export class GastosService {
     }
 
     async marcarFavorito(id, userId, favorite) {
-        const current = await this.gastosRepository.getById(id);
-        if (!current.length) throw customError(ErrorCode.GASTO_NOT_FOUND);
-
-        const entidad = await this.entidadesFinancierasRepository.getById(
-            current[0].financial_entity_id,
-            userId,
-        );
-        if (!entidad.length) throw customError(ErrorCode.NO_AUTORIZADO);
+        await this.#getOwned(id, userId);
 
         const [updated] = await this.gastosRepository.setFavorite(id, Boolean(favorite));
         return updated;
     }
 
-    async actualizarCategorias(gastoId, categoryIds) {
+    async actualizarCategorias(gastoId, userId, categoryIds) {
+        await this.#getOwned(gastoId, userId);
         await this.categoriasRepository.setCategoriasForGasto(gastoId, categoryIds);
         return await this.categoriasRepository.getCategoriasByGasto(gastoId);
     }
@@ -383,15 +409,14 @@ export class GastosService {
      *  - Sin sesión abierta (o `direct: true`): DIRECTO. Registra el movimiento
      *    ahora en el historial del gasto. NO entra en ningún resumen de cuentas.
      *
+     * En ambos casos el gasto tiene que ser del usuario y tener cuotas sin pagar.
+     *
      * `direct` lo usan las pantallas donde "hacer cuentas" no aplica (detalle de
      * entidad): el pago siempre es directo, aunque haya una sesión abierta.
      */
     async settleQuota(purchase_id, userId, { direct = false } = {}) {
-        const rows = await this.gastosRepository.getById(purchase_id);
-
-        if (rows.length === 0) {
-            throw customError(ErrorCode.GASTO_NOT_FOUND);
-        }
+        const rows = await this.#getOwned(purchase_id, userId);
+        this.#assertQuotasRestantes(rows[0]);
 
         const session = direct ? null : await this.getOpenSettlementSession(userId);
 
@@ -470,10 +495,8 @@ export class GastosService {
     // Revertir el último pago de una cuota. Siempre es directo: borra el
     // movimiento PAYMENT y registra un REFUND en el historial del gasto.
     // No interactúa con las sesiones de "hacer cuentas".
-    async refundCuota(purchase_id) {
-        const rows = await this.gastosRepository.getById(purchase_id);
-
-        if (rows.length === 0) throw customError(ErrorCode.GASTO_NOT_FOUND);
+    async refundCuota(purchase_id, userId) {
+        const rows = await this.#getOwned(purchase_id, userId);
         if (rows[0].payed_quotas === 0) throw customError(ErrorCode.SIN_CUOTAS_PARA_REVERTIR);
 
         const deleted = await this.movementsRepository.deleteLastPayment(purchase_id);
@@ -504,6 +527,7 @@ export class GastosService {
                 }
 
                 const gasto = rows[0];
+                await this.#assertOwner(gasto, userId);
 
                 if (gasto.is_postponed) {
                     failed.push({ id, reason: "Gasto postergado para la próxima sesión" });

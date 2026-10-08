@@ -14,7 +14,10 @@ export function verifyToken(req, res, next) {
   jwt.verify(token, JWT_SECRET, (err, decoded) => {
     if (err) {
       logRed('Token inválido', token);
-      return res.status(HttpStatus.FORBIDDEN).json({ message: 'Token inválido' });
+      // 401 (no 403): un token vencido o inválido es "no autenticado", y es la
+      // señal que usan los clientes para cerrar la sesión y mandar al login.
+      // 403 queda para "autenticado pero sin permiso" (NO_AUTORIZADO).
+      return res.status(HttpStatus.UNAUTHORIZED).json({ message: 'Token inválido o vencido' });
     }
 
     req.session = decoded;
