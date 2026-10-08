@@ -18,6 +18,9 @@ export const Currency = Object.freeze({
     ARS: 'ARS',
     USD: 'USD',
     EUR: 'EUR',
+    BRL: 'BRL',
+    CLP: 'CLP',
+    UYU: 'UYU',
 });
 
 export const ExpenseType = Object.freeze({
