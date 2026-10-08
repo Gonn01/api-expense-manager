@@ -18,12 +18,11 @@ When making a contract-changing change here, call out explicitly whether the web
 
 ## Documentation update rule
 
-The documentation for the whole system (this API + both clients) lives in the **web repo**, not here:
+- `.claude/guides/arquitectura-api.md` (this repo) — this API's architecture guide. Read it before changing code here.
+- `c:\Users\gonza\Desktop\web-plataformas-de-desarrollo\docs\` — the functional documentation for the whole system (this API + both clients) lives in the **web repo**, not here: functional requirements, non-functional requirements, use cases and their diagrams.
+- The clients' architecture guides are in their own repos: `c:\Users\gonza\Desktop\web-plataformas-de-desarrollo\.claude\guides\arquitectura-web.md` and `d:\proyectos_flutter\app_expense_manager\.claude\guides\arquitectura-flutter.md`.
 
-- `c:\Users\gonza\Desktop\web-plataformas-de-desarrollo\docs\` — functional requirements, non-functional requirements, use cases and their diagrams.
-- `c:\Users\gonza\Desktop\web-plataformas-de-desarrollo\.claude\guides\` — development guides; `arquitectura-api.md` is the one for this repo. Read it before changing code here.
-
-**Every change made in this repo must update, in the same change, whatever it leaves stale** in those two folders and in this `CLAUDE.md`. `.claude\guides\documentacion.md` (web repo) has the table of what to update for each kind of change — follow it. Document what the code actually does: a rule this API does not enforce is recorded as a known limitation, not as fulfilled.
+**Every change made in this repo must update, in the same change, whatever it leaves stale** in this repo's architecture guide, in the web repo's `docs\` and in this `CLAUDE.md`. `c:\Users\gonza\Desktop\web-plataformas-de-desarrollo\.claude\guides\documentacion.md` has the table of what to update for each kind of change — follow it. Document what the code actually does: a rule this API does not enforce is recorded as a known limitation, not as fulfilled.
 
 At the end of every task, state which documentation files were updated, or say explicitly that none needed updating and why.
 
