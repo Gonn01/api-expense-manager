@@ -37,22 +37,6 @@ export class EntidadesFinancierasController {
         }
     };
 
-    gastosEliminados = async (req, res) => {
-        try {
-            const { id } = req.params;
-            const { userId } = req.session;
-
-            const response = await this.entidadesFinancierasService.gastosEliminados(id, userId);
-
-            res.json({
-                message: "Gastos eliminados de la entidad",
-                data: response
-            });
-        } catch (err) {
-            return handleError(res, err);
-        }
-    };
-
     crear = async (req, res) => {
         try {
             const { name } = req.body;

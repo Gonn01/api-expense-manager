@@ -37,6 +37,7 @@ export class EntidadesFinancierasService {
     const gastosActivos = gastos.filter(g => Number(g.payed_quotas) < Number(g.number_of_quotas) || g.fixed_expense);
     const gastosFinalizados = gastos.filter(g => Number(g.payed_quotas) >= Number(g.number_of_quotas) && !g.fixed_expense);
     const gastosPendientes = await this.gastosRepository.getPendingByEntidad(id);
+    const gastosEliminados = await this.gastosRepository.getDeletedByEntidad(id);
 
     const movements = await this.movementsRepository.getMovementsByEntidad(id);
 
@@ -51,6 +52,7 @@ export class EntidadesFinancierasService {
       gastos_activos: gastosActivos,
       gastos_inactivos: gastosFinalizados,
       gastos_pendientes: gastosPendientes,
+      gastos_eliminados: gastosEliminados,
       pending_count: gastosPendientes.length,
       movements,
     };
@@ -104,13 +106,6 @@ export class EntidadesFinancierasService {
 
   async obtenerMovements(id) {
     return await this.movementsRepository.getMovementsByEntidad(id);
-  }
-
-  async gastosEliminados(entidadId, userId) {
-    const entidad = await this.entidadesFinancierasRepository.getById(entidadId, userId);
-    if (!entidad.length) throw customError(ErrorCode.ENTIDAD_NOT_FOUND);
-
-    return await this.gastosRepository.getDeletedByEntidad(entidadId);
   }
 
   async vincularUsuario(entityId, userId, email) {
