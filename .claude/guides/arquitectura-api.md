@@ -58,7 +58,7 @@ Reglas:
 ## 5. Datos
 
 - Sin ORM y sin herramienta de migraciones: el esquema de Postgres se administra fuera del repo. `migrate.js` **no** migra el esquema; es un script puntual que importa datos de una app anterior.
-- Baja lógica: entidades, gastos y categorías llevan `deleted`. Toda consulta de lectura filtra `deleted = false`.
+- Baja lógica: entidades, gastos y categorías llevan `deleted`. Toda consulta de lectura filtra `deleted = false`, salvo el listado `GET /entidades-financieras`, que devuelve activas y eliminadas juntas con el campo `deleted` para que cada cliente las separe.
 - Las cuotas pagas no se guardan: se cuentan los movimientos `PAYMENT` de `purchases_movements`.
 - Historial: toda operación relevante registra un movimiento (`movementsRepository.createGastoLog` / `createEntidadLog`) con un tipo de `MovementType` (`utils/enums.js`). El historial de entidades es *best-effort*: si falla, se registra en el log y la operación continúa.
 - Enums de dominio (`Currency`, `ExpenseType`, `ExpenseStatus`, `MovementType`) en `utils/enums.js`.

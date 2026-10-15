@@ -6,7 +6,6 @@ const router = express.Router();
 const controller = makeEntidadesFinancierasController();
 
 router.get("/", controller.listar);
-router.get("/eliminadas", controller.listarEliminadas);
 router.get("/:id", controller.obtenerPorId);
 router.post("/", controller.crear);
 router.delete("/:id", controller.eliminar);

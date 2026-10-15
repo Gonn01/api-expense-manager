@@ -57,7 +57,6 @@ const CATALOG = Object.freeze({
     PAGO_PENDIENTE_NOT_FOUND: { status: HttpStatus.NOT_FOUND, message: "Pago pendiente no encontrado" },
 
     // ─── Categorías ──────────────────────────────────────────────────────────
-    CATEGORIA_NOT_FOUND: { status: HttpStatus.NOT_FOUND, message: "Categoría no encontrada" },
 
     // ─── Modo "hacer cuentas" (settlement) ────────────────────────────────────
     SETTLEMENT_REQUIRED: { status: HttpStatus.CONFLICT, message: 'Activá el modo "Hacer cuentas" para registrar pagos.' },

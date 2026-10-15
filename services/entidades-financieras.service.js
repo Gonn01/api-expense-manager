@@ -27,10 +27,6 @@ export class EntidadesFinancierasService {
     return await this.entidadesFinancierasRepository.listar(userId);
   }
 
-  async listarEliminadas(userId) {
-    return await this.entidadesFinancierasRepository.listarEliminadas(userId);
-  }
-
   async restaurar(id, userId) {
     return await this.entidadesFinancierasRepository.restaurar(id, userId);
   }

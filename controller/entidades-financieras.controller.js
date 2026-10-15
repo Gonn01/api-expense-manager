@@ -21,22 +21,6 @@ export class EntidadesFinancierasController {
         }
     }
 
-    listarEliminadas = async (req, res) => {
-        try {
-            const { userId } = req.session;
-
-            const response = await this.entidadesFinancierasService.listarEliminadas(userId);
-
-            res.json({
-                message: "Listado de entidades financieras eliminadas",
-                data: response
-            });
-        } catch (err) {
-            logRed(err);
-            res.status(500).json({ error: "Error en el servidor" });
-        }
-    }
-
     restaurar = async (req, res) => {
         try {
             const { id } = req.params;
@@ -49,8 +33,7 @@ export class EntidadesFinancierasController {
                 data: response
             });
         } catch (err) {
-            logRed(err);
-            res.status(500).json({ error: "Error en el servidor" });
+            return handleError(res, err);
         }
     }
 

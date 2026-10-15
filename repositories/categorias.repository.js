@@ -11,41 +11,12 @@ export class CategoriasRepository {
         );
     }
 
-    async getById(id, userId) {
-        return await executeQuery(
-            `SELECT id, name, color, created_at
-             FROM user_categories
-             WHERE id = $1 AND user_id = $2 AND deleted = false`,
-            [id, userId]
-        );
-    }
-
     async create(name, color, userId) {
         return await executeQuery(
             `INSERT INTO user_categories (name, color, user_id, deleted, created_at)
              VALUES ($1, $2, $3, false, NOW())
              RETURNING id, name, color, created_at`,
             [name, color ?? '#52b788', userId]
-        );
-    }
-
-    async update(id, name, color, userId) {
-        return await executeQuery(
-            `UPDATE user_categories
-             SET name = $1, color = $2
-             WHERE id = $3 AND user_id = $4 AND deleted = false
-             RETURNING id, name, color, created_at`,
-            [name, color ?? '#52b788', id, userId]
-        );
-    }
-
-    async delete(id, userId) {
-        return await executeQuery(
-            `UPDATE user_categories
-             SET deleted = true
-             WHERE id = $1 AND user_id = $2
-             RETURNING id`,
-            [id, userId]
         );
     }
 

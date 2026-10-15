@@ -3,11 +3,12 @@ import { executeQuery } from "../db.js";
 export class EntidadesFinancierasRepository {
     // Listado con los contadores ya agregados en una sola query (antes era un
     // N+1: 1 query + 2 por entidad, secuenciales -> ~10s con la DB remota).
+    // Trae activas y eliminadas juntas (campo `deleted`); los clientes separan.
     //   cantidad      = compras ACTIVE no saldadas (o gasto fijo)
     //   pending_count = compras PENDING_APPROVAL
     async listar(userId) {
         return await executeQuery(
-            `SELECT fe.id, fe.name, fe.linked_user_id, fe.is_favorite,
+            `SELECT fe.id, fe.name, fe.linked_user_id, fe.is_favorite, fe.deleted,
                     u.name AS linked_user_name, u.email AS linked_user_email,
                     COUNT(p.id) FILTER (
                         WHERE p.status = 'ACTIVE'
@@ -25,22 +26,10 @@ export class EntidadesFinancierasRepository {
                  WHERE movement_type = 'PAYMENT'
                  GROUP BY purchase_id
              ) pm ON pm.purchase_id = p.id
-             WHERE fe.deleted = false AND fe.user_id = $1
+             WHERE fe.user_id = $1
              GROUP BY fe.id, u.name, u.email
-             ORDER BY fe.is_favorite DESC, fe.created_at DESC`,
+             ORDER BY fe.deleted, fe.is_favorite DESC, fe.created_at DESC`,
             [userId]
-        );
-    }
-
-    async listarEliminadas(userId) {
-        return await executeQuery(
-            `SELECT fe.id, fe.name, fe.linked_user_id, fe.is_favorite,
-                    u.name AS linked_user_name, u.email AS linked_user_email
-             FROM financial_entities fe
-             LEFT JOIN users u ON u.id = fe.linked_user_id
-             WHERE fe.deleted = true AND fe.user_id = $1
-             ORDER BY fe.is_favorite DESC, fe.created_at DESC`,
-            [userId], true
         );
     }
 

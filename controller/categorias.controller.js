@@ -29,31 +29,4 @@ export class CategoriasController {
             return handleError(res, err);
         }
     };
-
-    actualizar = async (req, res) => {
-        try {
-            const { id } = req.params;
-            const { name, color } = req.body;
-            const { userId } = req.session;
-
-            if (!name) return badRequest(res, "Falta el campo 'name'");
-
-            const data = await this.categoriasService.actualizar(id, name, color, userId);
-            res.json({ message: "Categoría actualizada con éxito", data });
-        } catch (err) {
-            return handleError(res, err);
-        }
-    };
-
-    eliminar = async (req, res) => {
-        try {
-            const { id } = req.params;
-            const { userId } = req.session;
-
-            const data = await this.categoriasService.eliminar(id, userId);
-            res.json({ message: "Categoría eliminada con éxito", data });
-        } catch (err) {
-            return handleError(res, err);
-        }
-    };
 }
