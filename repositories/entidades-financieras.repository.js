@@ -32,6 +32,18 @@ export class EntidadesFinancierasRepository {
         );
     }
 
+    async listarEliminadas(userId) {
+        return await executeQuery(
+            `SELECT fe.id, fe.name, fe.linked_user_id, fe.is_favorite,
+                    u.name AS linked_user_name, u.email AS linked_user_email
+             FROM financial_entities fe
+             LEFT JOIN users u ON u.id = fe.linked_user_id
+             WHERE fe.deleted = true AND fe.user_id = $1
+             ORDER BY fe.is_favorite DESC, fe.created_at DESC`,
+            [userId], true
+        );
+    }
+
     async getById(id, userId) {
         return await executeQuery(
             `SELECT fe.id, fe.name, fe.user_id, fe.deleted, fe.created_at, fe.linked_user_id, fe.is_favorite,
@@ -98,6 +110,16 @@ export class EntidadesFinancierasRepository {
              WHERE id = $1 AND user_id = $2
              RETURNING id`,
             [id, userId]
+        );
+    }
+
+    async restaurar(id, userId) {
+        return await executeQuery(
+            `UPDATE financial_entities
+             SET deleted = false
+             WHERE id = $1 AND user_id = $2
+             RETURNING id, name, user_id, deleted, created_at, linked_user_id`,
+            [id, userId], true
         );
     }
 

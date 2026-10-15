@@ -104,10 +104,41 @@ export class GastosService {
     async update(id, userId, name, amount, image_url, fixed_expense, type, category_ids, payed_quotas, apply_to_linked = false) {
         const current = await this.#getOwned(id, userId);
 
+        const normalizedType = type != null ? String(type).toUpperCase() : current[0].type;
+
+        const changes = [];
+
+        if (current[0].name !== name) {
+            changes.push(`Nombre: "${current[0].name}" → "${name}"`);
+        }
+        if (Number(current[0].amount) !== Number(amount)) {
+            changes.push(`Monto: $${current[0].amount} → $${amount}`);
+        }
+        if (current[0].type !== normalizedType) {
+            changes.push(`Tipo: ${current[0].type === 'INGRESO' ? 'Ingreso' : 'Egreso'} → ${normalizedType === 'INGRESO' ? 'Ingreso' : 'Egreso'}`);
+        }
+        if (Boolean(current[0].fixed_expense) !== Boolean(fixed_expense)) {
+            changes.push(`Frecuencia: ${current[0].fixed_expense ? 'Fijo' : 'En cuotas'} → ${fixed_expense ? 'Fijo' : 'En cuotas'}`);
+        }
+        if (Array.isArray(category_ids)) {
+            const currentCategoryIds = (await this.categoriasRepository.getCategoriasByGasto(id))
+                .map((c) => String(c.id)).sort();
+            const newCategoryIds = category_ids.map((cid) => String(cid)).sort();
+            if (JSON.stringify(currentCategoryIds) !== JSON.stringify(newCategoryIds)) {
+                changes.push('Categorías actualizadas');
+            }
+        }
+
+        const editDetail = changes.length ? changes.join('\n') : null;
+
         const [row] = await this.gastosRepository.update(id, name, amount, image_url, fixed_expense, type);
 
         if (row.length === 0) {
             throw customError(ErrorCode.GASTO_NOT_FOUND);
+        }
+
+        if (changes.length) {
+            await this.movementsRepository.createGastoLog(id, MovementType.EDITED, null, null, null, editDetail);
         }
 
         if (payed_quotas !== undefined && !fixed_expense) {
@@ -165,6 +196,7 @@ export class GastosService {
             throw customError(ErrorCode.GASTO_NOT_FOUND);
         }
 
+        await this.movementsRepository.createGastoLog(id, MovementType.DELETE);
         await this.#logEntidad(
             current[0].financial_entity_id,
             MovementType.DELETE,
@@ -198,6 +230,7 @@ export class GastosService {
         const [restored] = await this.gastosRepository.restore(id);
         if (!restored) throw customError(ErrorCode.GASTO_NOT_FOUND);
 
+        await this.movementsRepository.createGastoLog(id, MovementType.RESTORE);
         await this.#logEntidad(
             gasto.financial_entity_id,
             MovementType.RESTORE,

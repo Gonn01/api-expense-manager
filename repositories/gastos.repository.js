@@ -15,6 +15,98 @@ const CALCULATED_FIELDS = `
   (SELECT lnk.type FROM purchases lnk WHERE lnk.id = p.linked_purchase_id) AS linked_type
 `;
 
+/**
+ * Asegura las columnas extra de "purchases" que no vienen del esquema base.
+ * Se llama una vez al arrancar el server (index.js), igual que ensureReconcileSchema.
+ */
+export async function ensureGastosSchema() {
+  const steps = [
+    ["purchases.linked_purchase_id", `
+      ALTER TABLE purchases ADD COLUMN IF NOT EXISTS linked_purchase_id INTEGER
+    `],
+    ["purchases_movements.created_by_user_id", `
+      ALTER TABLE purchases_movements ADD COLUMN IF NOT EXISTS created_by_user_id INTEGER
+    `],
+    ["purchases_movements.detail", `
+      ALTER TABLE purchases_movements ADD COLUMN IF NOT EXISTS detail TEXT
+    `],
+    ["purchases.is_postponed", `
+      ALTER TABLE purchases ADD COLUMN IF NOT EXISTS is_postponed BOOLEAN NOT NULL DEFAULT false
+    `],
+    ["purchases.is_favorite", `
+      ALTER TABLE purchases ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN NOT NULL DEFAULT false
+    `],
+    ["financial_entities.is_favorite", `
+      ALTER TABLE financial_entities ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN NOT NULL DEFAULT false
+    `],
+    // Índices para el listado de entidades y los CALCULATED_FIELDS (que
+    // cuentan movimientos por compra en casi todas las queries de gastos).
+    ["idx purchases(financial_entity_id, status)", `
+      CREATE INDEX IF NOT EXISTS purchases_entity_status_idx
+        ON purchases (financial_entity_id, status) WHERE deleted = false
+    `],
+    ["idx purchases_movements(purchase_id, movement_type)", `
+      CREATE INDEX IF NOT EXISTS purchases_movements_purchase_type_idx
+        ON purchases_movements (purchase_id, movement_type)
+    `],
+  ];
+
+  for (const [name, sql] of steps) {
+    try {
+      await executeQuery(sql);
+    } catch (err) {
+      logRed(`[gastos schema] falló "${name}": ${err.message}`);
+      throw err;
+    }
+  }
+
+  // "purchases_movements.movement_type" es un enum de Postgres: hay que registrar
+  // el valor PENDING_PAYMENT antes de poder insertarlo.
+  for (const value of ["PENDING_PAYMENT", "EDITED", "RESTORE", "DELETE"]) {
+    try {
+      await ensureMovementTypeValue(value);
+    } catch (err) {
+      logRed(`[gastos schema] falló "movement_type += ${value}": ${err.message}`);
+      throw err;
+    }
+  }
+
+  logGreen("[gastos schema] OK");
+}
+
+async function ensureMovementTypeValue(value) {
+  const typeRows = await executeQuery(`
+    SELECT t.typname, t.typtype
+    FROM pg_attribute a
+    JOIN pg_class c ON c.oid = a.attrelid
+    JOIN pg_type  t ON t.oid = a.atttypid
+    WHERE c.relname = 'purchases_movements'
+      AND a.attname = 'movement_type'
+      AND a.attnum > 0
+      AND NOT a.attisdropped
+    LIMIT 1
+  `);
+
+  const meta = typeRows[0];
+  if (!meta || meta.typtype !== "e") return; // no es enum: nada que asegurar
+
+  const exists = await executeQuery(
+    `
+    SELECT 1
+    FROM pg_enum e
+    JOIN pg_type t ON t.oid = e.enumtypid
+    WHERE t.typname = $1 AND e.enumlabel = $2
+    LIMIT 1
+  `,
+    [meta.typname, value]
+  );
+
+  if (exists.length) return;
+
+  // Sin IF NOT EXISTS para compatibilidad con Postgres < 12; ya validamos arriba.
+  await executeQuery(`ALTER TYPE "${meta.typname}" ADD VALUE '${value}'`);
+}
+
 export class GastosRepository {
   async getById(id) {
     return await executeQuery(

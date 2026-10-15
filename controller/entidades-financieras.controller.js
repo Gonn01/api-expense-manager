@@ -21,6 +21,39 @@ export class EntidadesFinancierasController {
         }
     }
 
+    listarEliminadas = async (req, res) => {
+        try {
+            const { userId } = req.session;
+
+            const response = await this.entidadesFinancierasService.listarEliminadas(userId);
+
+            res.json({
+                message: "Listado de entidades financieras eliminadas",
+                data: response
+            });
+        } catch (err) {
+            logRed(err);
+            res.status(500).json({ error: "Error en el servidor" });
+        }
+    }
+
+    restaurar = async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { userId } = req.session;
+
+            const response = await this.entidadesFinancierasService.restaurar(id, userId);
+
+            res.json({
+                message: "Entidad financiera restaurada con éxito",
+                data: response
+            });
+        } catch (err) {
+            logRed(err);
+            res.status(500).json({ error: "Error en el servidor" });
+        }
+    }
+
     obtenerPorId = async (req, res) => {
         try {
             const { id } = req.params;

@@ -9,6 +9,7 @@ router.post("/", controller.crear);
 router.get('/:id', controller.getById);
 router.put('/:id', controller.update);
 router.delete('/:id', controller.delete);
+router.put('/:id/restaurar', controller.restaurar);
 router.put('/:id/categorias', controller.actualizarCategorias);
 router.put('/:id/postergar', controller.postergar);
 router.put('/:id/favorito', controller.favorito);

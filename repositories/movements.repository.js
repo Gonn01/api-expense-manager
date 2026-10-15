@@ -13,7 +13,7 @@ export class MovementsRepository {
 
     async getMovementsByGasto(gastoId) {
         return await executeQuery(
-            `SELECT id, created_at, movement_type, amount, payment_date
+            `SELECT id, created_at, movement_type, amount, payment_date, detail
              FROM purchases_movements
              WHERE purchase_id = $1
              ORDER BY created_at DESC`,
@@ -51,12 +51,12 @@ export class MovementsRepository {
         );
     }
 
-    async createGastoLog(gastoId, movementType, amount = null, paymentDate = null, createdByUserId = null) {
+    async createGastoLog(gastoId, movementType, amount = null, paymentDate = null, createdByUserId = null, detail = null) {
         return await executeQuery(
-            `INSERT INTO purchases_movements (created_at, purchase_id, movement_type, amount, payment_date, created_by_user_id)
-             VALUES (NOW(), $1, $2, $3, $4, $5)
+            `INSERT INTO purchases_movements (created_at, purchase_id, movement_type, amount, payment_date, created_by_user_id, detail)
+             VALUES (NOW(), $1, $2, $3, $4, $5, $6)
              RETURNING *`,
-            [gastoId, movementType, amount, paymentDate, createdByUserId]
+            [gastoId, movementType, amount, paymentDate, createdByUserId, detail]
         );
     }
 
