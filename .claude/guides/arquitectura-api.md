@@ -60,13 +60,27 @@ Reglas:
 - Sin ORM y sin herramienta de migraciones: el esquema de Postgres se administra fuera del repo. `migrate.js` **no** migra el esquema; es un script puntual que importa datos de una app anterior.
 - Baja lógica: entidades, gastos y categorías llevan `deleted`. Toda consulta de lectura filtra `deleted = false`, salvo el listado `GET /entidades-financieras`, que devuelve activas y eliminadas juntas con el campo `deleted` para que cada cliente las separe.
 - Las cuotas pagas no se guardan: se cuentan los movimientos `PAYMENT` de `purchases_movements`.
-- Historial: toda operación relevante registra un movimiento (`movementsRepository.createGastoLog` / `createEntidadLog`) con un tipo de `MovementType` (`utils/enums.js`). El historial de entidades es *best-effort*: si falla, se registra en el log y la operación continúa.
+- Historial: toda operación relevante registra un movimiento (`movementsRepository.createGastoLog` / `createEntidadLog`) con un tipo de `MovementType` (`utils/enums.js`). El historial de entidades es *best-effort*: si falla, se registra en el log y la operación continúa (corre en un savepoint, ver abajo).
 - Enums de dominio (`Currency`, `ExpenseType`, `ExpenseStatus`, `MovementType`) en `utils/enums.js`.
-- No hay transacciones: las operaciones de varias escrituras no son atómicas. Ordenar las escrituras para que un fallo intermedio deje el estado más inocuo posible.
+
+### Transacciones
+
+`db.js` expone tres helpers. La transacción en curso viaja en un `AsyncLocalStorage`, así que `executeQuery` la usa sola: los repositories no reciben nada nuevo por parámetro.
+
+- `withTransaction(fn)`: corre `fn` como una transacción (todo o nada). Si `fn` tira, se hace ROLLBACK y el error se propaga. Anidada dentro de otra, se suma a la de afuera.
+- `afterCommit(fn)`: posterga un efecto externo hasta el COMMIT y lo descarta si hay ROLLBACK. Fuera de una transacción corre en el momento. `triggerCompartidos` lo usa siempre: ningún cliente se entera de un cambio que no se guardó.
+- `bestEffort(fn)`: para una escritura que puede fallar sin arrastrar a la operación, como el historial de entidades. Dentro de una transacción corre en un SAVEPOINT, porque en Postgres una consulta fallida aborta la transacción entera aunque el error se atrape en JS. El error se propaga, así que el llamador lo atrapa y lo registra.
+
+Reglas:
+
+- **Toda operación de service con más de una escritura va en una transacción**: `return this.tx(async () => { … })`. Los services reciben `runInTransaction` por constructor (por defecto, `withTransaction`); los tests unitarios pasan `(fn) => fn()`. Una operación de una sola escritura no la necesita.
+- Dentro de una transacción las consultas van por una sola conexión. Se pueden lanzar en paralelo con `Promise.all`, salvo `bestEffort`, que se espera sola: lo que corra en paralelo quedaría dentro de su savepoint.
+- Si hay riesgo de que dos pedidos simultáneos procesen lo mismo, la fila se bloquea con `SELECT … FOR UPDATE` dentro de la transacción. Lo hace, por ejemplo, el cierre de la sesión de cuentas (`getOpenSession(userId, { forUpdate: true })`).
+- Un método de repository que hace varias consultas también se envuelve en `withTransaction`, como `setCategoriasForGasto`, que hace DELETE + INSERT.
 
 ## 6. Tiempo real
 
-`utils/pusher.js` expone `triggerCompartidos(userId, evento, datos)`, que publica en `compartidos-<userId>` y **nunca** propaga el error: un fallo de Pusher no debe romper la operación de negocio.
+`utils/pusher.js` expone `triggerCompartidos(userId, evento, datos)`, que publica en `compartidos-<userId>` y **nunca** propaga el error: un fallo de Pusher no debe romper la operación de negocio. Dentro de una transacción, el aviso sale recién después del COMMIT (`afterCommit`).
 
 Eventos existentes: `compartido.nuevo`, `compartido.aprobado`, `compartido.rechazado`, `pago.pendiente`, `pago.confirmado`, `pago.rechazado`. Un evento nuevo necesita su handler en los dos clientes.
 
@@ -88,14 +102,14 @@ npx eslint .
 node seed.js               # carga datos falsos; TRUNCA las tablas: nunca contra producción
 ```
 
-Los tests son unitarios y no necesitan base de datos: los de controllers simulan el service, y `tests/gastos.service.test.js` simula los repositories para probar las reglas de negocio (pertenencia, cuotas restantes).
+Los tests son unitarios y no necesitan base de datos: los de controllers simulan el service, los de services simulan los repositories y pasan `runInTransaction: (fn) => fn()`, y `tests/db.test.js` simula postgres.js para probar los helpers de transacciones.
 
 ## 9. Checklist: endpoint o recurso nuevo
 
 - [ ] Ruta en `routes/<recurso>.routes.js` (y montada en `routes/index.js` si el recurso es nuevo).
 - [ ] Factory que arma repository → service → controller.
 - [ ] Controller: `userId` desde `req.session`, validación de forma con `badRequest`, `handleError` en el `catch`.
-- [ ] Service: reglas de negocio y **verificación de pertenencia** del recurso al usuario.
+- [ ] Service: reglas de negocio y **verificación de pertenencia** del recurso al usuario. Si escribe más de una vez, en `this.tx(...)`.
 - [ ] Repository: SQL parametrizado, filtrando `deleted = false`.
 - [ ] Errores de dominio nuevos en el `CATALOG`.
 - [ ] Movimiento de historial si la operación lo amerita.

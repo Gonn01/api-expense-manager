@@ -1,21 +1,30 @@
 import { MovementType } from "../utils/enums.js";
 import { customError, ErrorCode } from "../utils/errors.js";
 import { logRed } from "../utils/logs_custom.js";
+import { withTransaction, bestEffort } from "../db.js";
 
 export class EntidadesFinancierasService {
-  constructor({ entidadesFinancierasRepository, gastosRepository, movementsRepository, authRepository }) {
+  // `runInTransaction`: ver GastosService (los tests pasan una que solo ejecuta).
+  constructor({
+    entidadesFinancierasRepository,
+    gastosRepository,
+    movementsRepository,
+    authRepository,
+    runInTransaction = withTransaction,
+  }) {
     this.entidadesFinancierasRepository = entidadesFinancierasRepository;
     this.gastosRepository = gastosRepository;
     this.movementsRepository = movementsRepository;
     this.authRepository = authRepository;
+    this.tx = runInTransaction;
   }
 
   // Registra un movimiento en el historial de la entidad. Best-effort: si falla
-  // el log no rompemos la operación real.
+  // el log no rompemos la operación real (ni su transacción: corre en un savepoint).
   async #log(entidadId, type, detail = null) {
     if (!entidadId) return;
     try {
-      await this.movementsRepository.createEntidadLog(entidadId, type, detail);
+      await bestEffort(() => this.movementsRepository.createEntidadLog(entidadId, type, detail));
     } catch (err) {
       logRed(`[historial entidad ${entidadId}] no se pudo registrar ${type}: ${err.message}`);
     }
@@ -63,14 +72,16 @@ export class EntidadesFinancierasService {
   }
 
   async crear(name, userId) {
-    const existing = await this.entidadesFinancierasRepository.findByName(userId, name);
-    if (existing.length) throw customError(ErrorCode.ENTIDAD_YA_EXISTE);
+    return this.tx(async () => {
+      const existing = await this.entidadesFinancierasRepository.findByName(userId, name);
+      if (existing.length) throw customError(ErrorCode.ENTIDAD_YA_EXISTE);
 
-    const [row] = await this.entidadesFinancierasRepository.create(name, userId);
+      const [row] = await this.entidadesFinancierasRepository.create(name, userId);
 
-    await this.movementsRepository.createEntidadLog(row.id, MovementType.CREATION);
+      await this.movementsRepository.createEntidadLog(row.id, MovementType.CREATION);
 
-    return row;
+      return row;
+    });
   }
 
   async actualizar(id, name, userId) {

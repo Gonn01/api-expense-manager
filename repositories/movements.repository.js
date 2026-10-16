@@ -60,6 +60,32 @@ export class MovementsRepository {
         );
     }
 
+    /**
+     * Inserta varios movimientos en una sola consulta (todo o nada).
+     * @param {{ gastoId, movementType, amount?, paymentDate?, createdByUserId? }[]} logs
+     */
+    async createGastoLogs(logs) {
+        if (!logs.length) return [];
+        const values = [];
+        const rows = logs.map((log, i) => {
+            const b = i * 5;
+            values.push(
+                log.gastoId,
+                log.movementType,
+                log.amount ?? null,
+                log.paymentDate ?? null,
+                log.createdByUserId ?? null,
+            );
+            return `(NOW(), $${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5})`;
+        });
+        return await executeQuery(
+            `INSERT INTO purchases_movements (created_at, purchase_id, movement_type, amount, payment_date, created_by_user_id)
+             VALUES ${rows.join(", ")}
+             RETURNING *`,
+            values
+        );
+    }
+
     async getPendingPaymentById(movementId) {
         return await executeQuery(
             `SELECT id, purchase_id, movement_type, amount, payment_date, created_by_user_id

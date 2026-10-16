@@ -1,5 +1,5 @@
-import { logRed } from "../utils/logs_custom.js";
 import { customError, ErrorCode } from "../utils/errors.js";
+import { withTransaction } from "../db.js";
 
 // El driver puede devolver columnas JSONB como string; normalizamos.
 function parseJson(value, fallback) {
@@ -40,9 +40,11 @@ function buildTotals(items) {
 }
 
 export class SettlementService {
-    constructor({ settlementRepository, gastosService }) {
+    // `runInTransaction`: ver GastosService (los tests pasan una que solo ejecuta).
+    constructor({ settlementRepository, gastosService, runInTransaction = withTransaction }) {
         this.settlementRepository = settlementRepository;
         this.gastosService = gastosService;
+        this.tx = runInTransaction;
     }
 
     async getSession(userId) {
@@ -92,46 +94,59 @@ export class SettlementService {
     }
 
     async finishSession(userId) {
-        const session = await this.settlementRepository.getOpenSession(userId);
-        if (!session) throw customError(ErrorCode.NO_OPEN_SESSION);
+        // Todo el cierre es una transacción: pagos, snapshot y cierre de la sesión
+        // se guardan juntos o no se guarda nada. La sesión se bloquea (FOR UPDATE)
+        // para que dos cierres simultáneos no paguen dos veces: el segundo espera
+        // y, cuando entra, la sesión ya no está abierta.
+        return this.tx(async () => {
+            const session = await this.settlementRepository.getOpenSession(userId, { forUpdate: true });
+            if (!session) throw customError(ErrorCode.NO_OPEN_SESSION);
 
-        // Pago diferido: marcar un gasto durante la sesión no lo paga. Recién al
-        // cerrar la sesión se registran los pagos reales de todo lo marcado.
-        await this.#effectMarkedPayments(userId, session.id);
+            // Pago diferido: marcar un gasto durante la sesión no lo paga. Recién al
+            // cerrar la sesión se registran los pagos reales de todo lo marcado.
+            await this.#effectMarkedPayments(userId, session.id);
 
-        const src = await this.settlementRepository.getSnapshotSourceItems(session.id);
-        const items = src.map((r) => ({
-            purchase_id: r.purchase_id,
-            name: r.name,
-            entity_id: r.entity_id,
-            entity_name: r.entity_name,
-            amount_per_quota: Number(r.amount_per_quota ?? 0),
-            currency: r.currency_type,
-            type: r.type,
-            fixed_expense: r.fixed_expense,
-            number_of_quotas: r.number_of_quotas ?? null,
-            quota_number: r.quota_number ?? null,
-            checked_at: r.checked_at,
-        }));
+            const src = await this.settlementRepository.getSnapshotSourceItems(session.id);
+            // Sin gastos que registrar no se guarda un resumen vacío: la sesión queda
+            // abierta para que el usuario marque algo o la descarte. Esto cubre también
+            // el caso en que la limpieza de arriba sacó todos los marcados.
+            if (src.length === 0) throw customError(ErrorCode.SETTLEMENT_EMPTY);
 
-        const totals = buildTotals(items);
-        const finishedAt = new Date();
-        const month = finishedAt.toISOString().slice(0, 7);
+            const items = src.map((r) => ({
+                purchase_id: r.purchase_id,
+                name: r.name,
+                entity_id: r.entity_id,
+                entity_name: r.entity_name,
+                amount_per_quota: Number(r.amount_per_quota ?? 0),
+                currency: r.currency_type,
+                type: r.type,
+                fixed_expense: r.fixed_expense,
+                number_of_quotas: r.number_of_quotas ?? null,
+                quota_number: r.quota_number ?? null,
+                checked_at: r.checked_at,
+            }));
 
-        const snapshot = await this.settlementRepository.insertSnapshot({
-            userId,
-            sessionId: session.id,
-            month,
-            startedAt: session.started_at,
-            finishedAt,
-            totals,
-            items,
+            const totals = buildTotals(items);
+            const finishedAt = new Date();
+            const month = finishedAt.toISOString().slice(0, 7);
+
+            const snapshot = await this.settlementRepository.insertSnapshot({
+                userId,
+                sessionId: session.id,
+                month,
+                startedAt: session.started_at,
+                finishedAt,
+                totals,
+                items,
+            });
+
+            await Promise.all([
+                this.settlementRepository.finishSession(session.id),
+                // Los gastos postergados vuelven a estar disponibles para la próxima sesión.
+                this.settlementRepository.releasePostponedForUser(userId),
+            ]);
+            return normalizeSnapshot(snapshot);
         });
-
-        await this.settlementRepository.finishSession(session.id);
-        // Los gastos postergados vuelven a estar disponibles para la próxima sesión.
-        await this.settlementRepository.releasePostponedForUser(userId);
-        return normalizeSnapshot(snapshot);
     }
 
     async discardSession(userId) {
@@ -167,33 +182,20 @@ export class SettlementService {
         if (!this.gastosService) return;
 
         const items = await this.settlementRepository.getSessionItems(sessionId);
-        const paymentDate = new Date();
+        if (!items.length) return;
 
-        for (const it of items) {
-            let gasto;
-            try {
-                gasto = await this.gastosService.getById(it.purchase_id, userId);
-            } catch {
-                await this.settlementRepository.removeItem(sessionId, it.purchase_id);
-                continue;
-            }
+        // Todos los pagos de una vez (un solo INSERT: si falla, no se registra
+        // ninguno y la sesión sigue abierta).
+        const { kept, discarded } = await this.gastosService.effectSettlementBatch(
+            items.map((it) => it.purchase_id),
+            userId,
+            new Date(),
+        );
 
-            const fullyPaid =
-                !gasto.fixed_expense &&
-                Number(gasto.payed_quotas) >= Number(gasto.number_of_quotas);
-
-            if (gasto.is_postponed || fullyPaid) {
-                await this.settlementRepository.removeItem(sessionId, it.purchase_id);
-                continue;
-            }
-
-            try {
-                await this.gastosService.effectSettlement(gasto, userId, paymentDate);
-                // Releer quota_number ahora que el pago quedó registrado.
-                await this.settlementRepository.upsertItem(sessionId, it.purchase_id);
-            } catch (err) {
-                logRed(`[settlement finish] no se pudo pagar la compra ${it.purchase_id}: ${err.message}`);
-            }
-        }
+        await Promise.all([
+            this.settlementRepository.removeItems(sessionId, discarded),
+            // Releer quota_number ahora que los pagos quedaron registrados.
+            this.settlementRepository.upsertItems(sessionId, kept),
+        ]);
     }
 }

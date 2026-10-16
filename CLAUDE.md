@@ -8,6 +8,8 @@ Plain Node.js/Express 5 HTTP API (ESM, `"type": "module"`, no TypeScript) backin
 
 No ORM: database access goes through a hand-rolled `executeQuery` wrapper (`db.js`) around the `postgres` (postgres.js) client, using raw SQL with `$1,$2...` placeholders. The `pg` package is a dependency but unused.
 
+**Transactions**: `db.js` also exposes `withTransaction(fn)`, `afterCommit(fn)` and `bestEffort(fn)`. The current transaction is carried in an `AsyncLocalStorage`, so `executeQuery` joins it automatically. Every service operation with more than one write runs as `return this.tx(async () => { … })`. Services take `runInTransaction` in their constructor; unit tests pass `(fn) => fn()`. Pusher notifications are deferred until COMMIT, and best-effort writes such as the entity history run in a savepoint. Full rules are in `.claude/guides/arquitectura-api.md` (section 5, "Transacciones").
+
 ## Feature parity rule
 
 Any change to the API's behavior (new endpoint, changed response shape, new field, new validation, new error code) affects **both** frontend clients and must be reflected in both: the React web app (`c:\Users\gonza\Desktop\web-plataformas-de-desarrollo`) and the Flutter app (`d:\proyectos_flutter\app_expense_manager`). Those two are meant to mirror each other's features on top of this same API.

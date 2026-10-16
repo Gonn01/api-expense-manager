@@ -1,5 +1,6 @@
 import { executeQuery } from "../db.js";
 import { Currency, ExpenseType, ExpenseStatus } from "../utils/enums.js";
+import { logGreen, logRed } from "../utils/logs_custom.js";
 
 const CALCULATED_FIELDS = `
   (SELECT COUNT(*) FROM purchases_movements WHERE purchase_id = p.id AND movement_type = 'PAYMENT')::int AS payed_quotas,
@@ -128,6 +129,21 @@ export class GastosRepository {
        JOIN financial_entities fe ON fe.id = p.financial_entity_id
        WHERE fe.user_id = $1 AND fe.deleted = false
          AND p.deleted = false AND p.id IN (${placeholders})`,
+      [userId, ...ids]
+    );
+  }
+
+  // Varios gastos no eliminados con sus campos calculados, en una sola consulta.
+  // `owned` indica si el gasto es de una entidad (no eliminada) del usuario.
+  async getByIdsWithOwner(ids, userId) {
+    if (!ids.length) return [];
+    const placeholders = ids.map((_, i) => `$${i + 2}`).join(", ");
+    return await executeQuery(
+      `SELECT p.*, ${CALCULATED_FIELDS}, (fe.id IS NOT NULL) AS owned
+       FROM purchases p
+       LEFT JOIN financial_entities fe
+              ON fe.id = p.financial_entity_id AND fe.user_id = $1 AND fe.deleted = false
+       WHERE p.deleted = false AND p.id IN (${placeholders})`,
       [userId, ...ids]
     );
   }
@@ -358,6 +374,23 @@ export class GastosRepository {
     );
   }
 
+  // Igual que clearFavoriteIfFinalized, para varios gastos en una sola consulta.
+  async clearFavoritesIfFinalized(purchaseIds) {
+    if (!purchaseIds.length) return [];
+    const placeholders = purchaseIds.map((_, i) => `$${i + 1}`).join(", ");
+    return await executeQuery(
+      `UPDATE purchases p
+       SET is_favorite = false
+       WHERE p.id IN (${placeholders})
+         AND p.is_favorite = true
+         AND p.fixed_expense = false
+         AND p.number_of_quotas > 0
+         AND (SELECT COUNT(*) FROM purchases_movements m
+              WHERE m.purchase_id = p.id AND m.movement_type = 'PAYMENT') >= p.number_of_quotas`,
+      purchaseIds
+    );
+  }
+
   // Un gasto en cuotas que quedó totalmente pagado deja de ser favorito.
   async clearFavoriteIfFinalized(purchaseId) {
     return await executeQuery(
@@ -432,6 +465,30 @@ export class GastosRepository {
    * (el que debe confirmar los pagos). Devuelve [] si la compra no está compartida
    * o la hermana no está activa.
    */
+  async getSharedSiblings(purchaseIds) {
+    // Igual que getSharedSibling, para varios gastos en una sola consulta:
+    // una fila por gasto compartido (`purchase_id`), los demás no aparecen.
+    if (!purchaseIds.length) return [];
+    const placeholders = purchaseIds.map((_, i) => `$${i + 1}`).join(", ");
+    return await executeQuery(
+      `SELECT DISTINCT ON (p.id)
+          p.id AS purchase_id,
+          sib.id AS sibling_id,
+          CASE WHEN p.shared_from_id IS NULL THEN sib.receiver_user_id
+               ELSE fe.user_id END AS counterparty_user_id
+       FROM purchases p
+       JOIN purchases sib
+         ON ((p.shared_from_id IS NULL AND sib.shared_from_id = p.id)
+          OR (p.shared_from_id IS NOT NULL AND sib.id = p.shared_from_id))
+        AND sib.deleted = false
+        AND sib.status = 'ACTIVE'
+       LEFT JOIN financial_entities fe ON fe.id = sib.financial_entity_id
+       WHERE p.id IN (${placeholders}) AND p.deleted = false
+       ORDER BY p.id`,
+      purchaseIds
+    );
+  }
+
   async getSharedSibling(purchaseId) {
     return await executeQuery(
       `SELECT

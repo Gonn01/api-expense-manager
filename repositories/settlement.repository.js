@@ -1,12 +1,15 @@
 import { executeQuery } from "../db.js";
 
 export class SettlementRepository {
-    async getOpenSession(userId) {
+    // `forUpdate` bloquea la fila hasta el fin de la transacción en curso (solo
+    // tiene efecto dentro de withTransaction): lo usa el cierre de la sesión.
+    async getOpenSession(userId, { forUpdate = false } = {}) {
         const rows = await executeQuery(
             `SELECT id, user_id, status, started_at, finished_at
              FROM settlement_sessions
              WHERE user_id = $1 AND status = 'OPEN'
-             LIMIT 1`,
+             LIMIT 1
+             ${forUpdate ? "FOR UPDATE" : ""}`,
             [userId],
         );
         return rows[0] ?? null;
@@ -33,25 +36,33 @@ export class SettlementRepository {
     }
 
     async upsertItem(sessionId, purchaseId) {
-        // quota_number = cuotas pagadas del gasto en este momento
-        // (si se llama tras pagar, ya incluye la recién pagada).
-        const cnt = await executeQuery(
-            `SELECT COUNT(*)::int AS n FROM purchases_movements
-             WHERE purchase_id = $1 AND movement_type = 'PAYMENT'`,
-            [purchaseId],
-        );
-        const quota = cnt[0]?.n ?? 0;
+        return await this.upsertItems(sessionId, [purchaseId]);
+    }
 
+    /**
+     * Marca varios gastos en la sesión en una sola consulta.
+     * quota_number = cuotas pagadas de cada gasto en este momento (si se llama
+     * tras pagar, ya incluye la recién pagada). Los ids tienen que llegar ya
+     * validados como enteros (el service verifica la pertenencia antes).
+     */
+    async upsertItems(sessionId, purchaseIds) {
+        // Sin repetidos: ON CONFLICT no puede tocar la misma fila dos veces.
+        const ids = [...new Set(purchaseIds.map(Number))];
+        if (!ids.length) return [];
+        const values = ids.map((_, i) => `($${i + 2}::int)`).join(", ");
         return await executeQuery(
             `INSERT INTO settlement_session_items (session_id, purchase_id, quota_number)
-             VALUES ($1, $2, $3)
+             SELECT $1::int, v.id,
+                    (SELECT COUNT(*)::int FROM purchases_movements m
+                     WHERE m.purchase_id = v.id AND m.movement_type = 'PAYMENT')
+             FROM (VALUES ${values}) AS v(id)
              ON CONFLICT (session_id, purchase_id)
              DO UPDATE SET
                  quota_number = GREATEST(
                      COALESCE(settlement_session_items.quota_number, 0),
                      COALESCE(EXCLUDED.quota_number, 0)
                  )`,
-            [sessionId, purchaseId, quota],
+            [sessionId, ...ids],
         );
     }
 
@@ -64,15 +75,17 @@ export class SettlementRepository {
     }
 
     async removeItems(sessionId, purchaseIds) {
-        for (const purchaseId of purchaseIds) {
-            await this.removeItem(sessionId, purchaseId);
-        }
+        if (!purchaseIds.length) return [];
+        const placeholders = purchaseIds.map((_, i) => `$${i + 2}`).join(", ");
+        return await executeQuery(
+            `DELETE FROM settlement_session_items
+             WHERE session_id = $1 AND purchase_id IN (${placeholders})`,
+            [sessionId, ...purchaseIds],
+        );
     }
 
     async addItems(sessionId, purchaseIds) {
-        for (const purchaseId of purchaseIds) {
-            await this.upsertItem(sessionId, purchaseId);
-        }
+        return await this.upsertItems(sessionId, purchaseIds);
     }
 
     async getSnapshotSourceItems(sessionId) {

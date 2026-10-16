@@ -1,4 +1,4 @@
-import { executeQuery } from "../db.js";
+import { executeQuery, withTransaction } from "../db.js";
 
 export class CategoriasRepository {
     async listar(userId) {
@@ -30,20 +30,25 @@ export class CategoriasRepository {
         );
     }
 
+    // Reemplaza las categorías del gasto. Borrar e insertar van en una misma
+    // transacción (o se suman a la de afuera): si el INSERT falla, el gasto no
+    // queda sin categorías.
     async setCategoriasForGasto(gastoId, categoryIds) {
-        await executeQuery(
-            `DELETE FROM purchases_categories WHERE purchase_id = $1`,
-            [gastoId]
-        );
+        return withTransaction(async () => {
+            await executeQuery(
+                `DELETE FROM purchases_categories WHERE purchase_id = $1`,
+                [gastoId]
+            );
 
-        if (!categoryIds || categoryIds.length === 0) return [];
+            if (!categoryIds || categoryIds.length === 0) return [];
 
-        const values = categoryIds.map((_, i) => `($1, $${i + 2}, NOW())`).join(", ");
-        return await executeQuery(
-            `INSERT INTO purchases_categories (purchase_id, category_id, created_at)
-             VALUES ${values}
-             RETURNING category_id`,
-            [gastoId, ...categoryIds]
-        );
+            const values = categoryIds.map((_, i) => `($1, $${i + 2}, NOW())`).join(", ");
+            return await executeQuery(
+                `INSERT INTO purchases_categories (purchase_id, category_id, created_at)
+                 VALUES ${values}
+                 RETURNING category_id`,
+                [gastoId, ...categoryIds]
+            );
+        });
     }
 }

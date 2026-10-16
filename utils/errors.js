@@ -61,6 +61,7 @@ const CATALOG = Object.freeze({
     // ─── Modo "hacer cuentas" (settlement) ────────────────────────────────────
     SETTLEMENT_REQUIRED: { status: HttpStatus.CONFLICT, message: 'Activá el modo "Hacer cuentas" para registrar pagos.' },
     NO_OPEN_SESSION: { status: HttpStatus.BAD_REQUEST, message: "No hay una sesión de cuentas abierta" },
+    SETTLEMENT_EMPTY: { status: HttpStatus.CONFLICT, message: "Marcá al menos un gasto para terminar las cuentas, o descartá la sesión." },
     SNAPSHOT_NOT_FOUND: { status: HttpStatus.NOT_FOUND, message: "Snapshot no encontrado" },
 });
 

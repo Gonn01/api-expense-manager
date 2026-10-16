@@ -1,12 +1,16 @@
 import { MovementType, ExpenseStatus } from "../utils/enums.js";
 import { triggerCompartidos } from "../utils/pusher.js";
 import { customError, ErrorCode } from "../utils/errors.js";
+import { logRed } from "../utils/logs_custom.js";
+import { withTransaction, bestEffort } from "../db.js";
 
 export class CompartidosService {
-    constructor({ gastosRepository, entidadesFinancierasRepository, movementsRepository }) {
+    // `runInTransaction`: ver GastosService (los tests pasan una que solo ejecuta).
+    constructor({ gastosRepository, entidadesFinancierasRepository, movementsRepository, runInTransaction = withTransaction }) {
         this.gastosRepository = gastosRepository;
         this.entidadesFinancierasRepository = entidadesFinancierasRepository;
         this.movementsRepository = movementsRepository;
+        this.tx = runInTransaction;
     }
 
     async getCompartidos(userId) {
@@ -37,20 +41,22 @@ export class CompartidosService {
     }
 
     async confirmarPago(movementId, userId) {
-        const [pend] = await this.movementsRepository.getPendingPaymentById(movementId);
-        if (!pend) throw customError(ErrorCode.PAGO_PENDIENTE_NOT_FOUND);
+        return this.tx(async () => {
+            const [pend] = await this.movementsRepository.getPendingPaymentById(movementId);
+            if (!pend) throw customError(ErrorCode.PAGO_PENDIENTE_NOT_FOUND);
 
-        await this.#assertConfirmerDePago(pend, userId);
+            await this.#assertConfirmerDePago(pend, userId);
 
-        const [confirmed] = await this.movementsRepository.confirmPendingPayment(movementId);
-        await this.gastosRepository.clearFavoriteIfFinalized(pend.purchase_id);
-        const [actor] = await this.gastosRepository.getUserName(userId);
-        await triggerCompartidos(pend.created_by_user_id, 'pago.confirmado', {
-            purchaseId: pend.purchase_id,
-            actorName: actor?.name ?? null,
+            const [confirmed] = await this.movementsRepository.confirmPendingPayment(movementId);
+            await this.gastosRepository.clearFavoriteIfFinalized(pend.purchase_id);
+            const [actor] = await this.gastosRepository.getUserName(userId);
+            await triggerCompartidos(pend.created_by_user_id, 'pago.confirmado', {
+                purchaseId: pend.purchase_id,
+                actorName: actor?.name ?? null,
+            });
+
+            return confirmed;
         });
-
-        return confirmed;
     }
 
     async rechazarPago(movementId, userId) {
@@ -70,99 +76,114 @@ export class CompartidosService {
     }
 
     async aprobar(gastoId, userId, financialEntityId, newEntityName) {
-        const rows = await this.gastosRepository.getById(gastoId);
-        if (!rows.length) throw customError(ErrorCode.GASTO_NOT_FOUND);
+        return this.tx(async () => {
+            const rows = await this.gastosRepository.getById(gastoId);
+            if (!rows.length) throw customError(ErrorCode.GASTO_NOT_FOUND);
 
-        const gasto = rows[0];
-        if (String(gasto.receiver_user_id) !== String(userId)) throw customError(ErrorCode.NO_AUTORIZADO);
-        if (gasto.status !== ExpenseStatus.PENDING_APPROVAL) throw customError(ErrorCode.GASTO_NO_PENDIENTE_APROBACION);
+            const gasto = rows[0];
+            if (String(gasto.receiver_user_id) !== String(userId)) throw customError(ErrorCode.NO_AUTORIZADO);
+            if (gasto.status !== ExpenseStatus.PENDING_APPROVAL) throw customError(ErrorCode.GASTO_NO_PENDIENTE_APROBACION);
 
-        let entityId = financialEntityId ?? null;
+            let entityId = financialEntityId ?? null;
 
-        if (!entityId && newEntityName) {
-            const [newEntity] = await this.entidadesFinancierasRepository.create(newEntityName, userId);
-            await this.movementsRepository.createEntidadLog(newEntity.id, MovementType.CREATION);
-            entityId = newEntity.id;
+            if (!entityId && newEntityName) {
+                const [newEntity] = await this.entidadesFinancierasRepository.create(newEntityName, userId);
+                await this.movementsRepository.createEntidadLog(newEntity.id, MovementType.CREATION);
+                entityId = newEntity.id;
 
-            const senderRows = await this.gastosRepository.getEntityOwnerByPurchaseId(gasto.shared_from_id);
-            if (senderRows.length) {
-                await this.entidadesFinancierasRepository.vincularUsuario(entityId, userId, senderRows[0].user_id);
+                const senderRows = await this.gastosRepository.getEntityOwnerByPurchaseId(gasto.shared_from_id);
+                if (senderRows.length) {
+                    await this.entidadesFinancierasRepository.vincularUsuario(entityId, userId, senderRows[0].user_id);
+                }
             }
-        }
 
-        if (!entityId) throw customError(ErrorCode.ENTIDAD_O_NOMBRE_REQUERIDO);
+            if (!entityId) throw customError(ErrorCode.ENTIDAD_O_NOMBRE_REQUERIDO);
 
-        const entidad = await this.entidadesFinancierasRepository.getById(entityId, userId);
-        if (!entidad.length) throw customError(ErrorCode.ENTIDAD_NOT_FOUND_O_AJENA);
+            const entidad = await this.entidadesFinancierasRepository.getById(entityId, userId);
+            if (!entidad.length) throw customError(ErrorCode.ENTIDAD_NOT_FOUND_O_AJENA);
 
-        const [[updated], notifRows] = await Promise.all([
-            this.gastosRepository.aprobarGasto(gastoId, entityId),
-            this.gastosRepository.getApprovalNotificationData(gastoId),
-        ]);
+            const [[updated], notifRows] = await Promise.all([
+                this.gastosRepository.aprobarGasto(gastoId, entityId),
+                this.gastosRepository.getApprovalNotificationData(gastoId),
+            ]);
 
-        const notif = notifRows[0];
+            const notif = notifRows[0];
 
-        await Promise.all([
-            this.gastosRepository.updateStatus(gasto.shared_from_id, ExpenseStatus.ACTIVE),
-            this.movementsRepository.createGastoLog(gastoId, MovementType.CREATION),
-            this.movementsRepository.createEntidadLog(
-                entityId,
-                MovementType.PURCHASE_CREATED,
-                `Gasto compartido aceptado: "${gasto.name}"`,
-            ).catch(() => {}),
-            notif && triggerCompartidos(notif.sender_user_id, 'compartido.aprobado', {
-                gastoId,
-                entityId: notif.sender_entity_id,
-                receiverName: notif.receiver_name,
-                gastoName: notif.gasto_name,
-            }),
-        ]);
+            // El historial de la entidad es best-effort y va solo, en su savepoint
+            // (no en el Promise.all: ver bestEffort en db.js).
+            try {
+                await bestEffort(() =>
+                    this.movementsRepository.createEntidadLog(
+                        entityId,
+                        MovementType.PURCHASE_CREATED,
+                        `Gasto compartido aceptado: "${gasto.name}"`,
+                    ),
+                );
+            } catch (err) {
+                logRed(`[historial entidad ${entityId}] no se pudo registrar PURCHASE_CREATED: ${err.message}`);
+            }
 
-        return updated;
+            await Promise.all([
+                this.gastosRepository.updateStatus(gasto.shared_from_id, ExpenseStatus.ACTIVE),
+                this.movementsRepository.createGastoLog(gastoId, MovementType.CREATION),
+                notif && triggerCompartidos(notif.sender_user_id, 'compartido.aprobado', {
+                    gastoId,
+                    entityId: notif.sender_entity_id,
+                    receiverName: notif.receiver_name,
+                    gastoName: notif.gasto_name,
+                }),
+            ]);
+
+            return updated;
+        });
     }
 
     async rechazar(gastoId, userId) {
-        const rows = await this.gastosRepository.getById(gastoId);
-        if (!rows.length) throw customError(ErrorCode.GASTO_NOT_FOUND);
+        return this.tx(async () => {
+            const rows = await this.gastosRepository.getById(gastoId);
+            if (!rows.length) throw customError(ErrorCode.GASTO_NOT_FOUND);
 
-        const gasto = rows[0];
-        if (String(gasto.receiver_user_id) !== String(userId)) throw customError(ErrorCode.NO_AUTORIZADO);
-        if (gasto.status !== ExpenseStatus.PENDING_APPROVAL) throw customError(ErrorCode.GASTO_NO_PENDIENTE_APROBACION);
+            const gasto = rows[0];
+            if (String(gasto.receiver_user_id) !== String(userId)) throw customError(ErrorCode.NO_AUTORIZADO);
+            if (gasto.status !== ExpenseStatus.PENDING_APPROVAL) throw customError(ErrorCode.GASTO_NO_PENDIENTE_APROBACION);
 
-        const [[updated], senderRows] = await Promise.all([
-            this.gastosRepository.updateStatus(gastoId, ExpenseStatus.REJECTED),
-            this.gastosRepository.getEntityOwnerByPurchaseId(gasto.shared_from_id),
-        ]);
+            const [[updated], senderRows] = await Promise.all([
+                this.gastosRepository.updateStatus(gastoId, ExpenseStatus.REJECTED),
+                this.gastosRepository.getEntityOwnerByPurchaseId(gasto.shared_from_id),
+            ]);
 
-        await Promise.all([
-            this.gastosRepository.updateStatus(gasto.shared_from_id, ExpenseStatus.REJECTED),
-            senderRows.length && triggerCompartidos(senderRows[0].user_id, 'compartido.rechazado', { gastoId }),
-        ]);
+            await Promise.all([
+                this.gastosRepository.updateStatus(gasto.shared_from_id, ExpenseStatus.REJECTED),
+                senderRows.length && triggerCompartidos(senderRows[0].user_id, 'compartido.rechazado', { gastoId }),
+            ]);
 
-        return updated;
+            return updated;
+        });
     }
 
     async reintentar(gastoId, userId) {
-        const originalRows = await this.gastosRepository.getById(gastoId);
-        if (!originalRows.length) throw customError(ErrorCode.GASTO_NOT_FOUND);
+        return this.tx(async () => {
+            const originalRows = await this.gastosRepository.getById(gastoId);
+            if (!originalRows.length) throw customError(ErrorCode.GASTO_NOT_FOUND);
 
-        const original = originalRows[0];
+            const original = originalRows[0];
 
-        const entidad = await this.entidadesFinancierasRepository.getById(original.financial_entity_id, userId);
-        if (!entidad.length) throw customError(ErrorCode.NO_AUTORIZADO);
+            const entidad = await this.entidadesFinancierasRepository.getById(original.financial_entity_id, userId);
+            if (!entidad.length) throw customError(ErrorCode.NO_AUTORIZADO);
 
-        const copyRows = await this.gastosRepository.getSharedCopyByOriginalId(gastoId);
-        if (!copyRows.length) throw customError(ErrorCode.GASTO_COMPARTIDO_NO_ASOCIADO);
+            const copyRows = await this.gastosRepository.getSharedCopyByOriginalId(gastoId);
+            if (!copyRows.length) throw customError(ErrorCode.GASTO_COMPARTIDO_NO_ASOCIADO);
 
-        const copy = copyRows[0];
-        if (copy.status !== ExpenseStatus.REJECTED) throw customError(ErrorCode.GASTO_COMPARTIDO_NO_RECHAZADO);
+            const copy = copyRows[0];
+            if (copy.status !== ExpenseStatus.REJECTED) throw customError(ErrorCode.GASTO_COMPARTIDO_NO_RECHAZADO);
 
-        const [[updated]] = await Promise.all([
-            this.gastosRepository.updateStatus(copy.id, ExpenseStatus.PENDING_APPROVAL),
-            this.gastosRepository.updateStatus(gastoId, ExpenseStatus.PENDING_APPROVAL),
-            triggerCompartidos(copy.receiver_user_id, 'compartido.nuevo', { gastoId }),
-        ]);
+            const [[updated]] = await Promise.all([
+                this.gastosRepository.updateStatus(copy.id, ExpenseStatus.PENDING_APPROVAL),
+                this.gastosRepository.updateStatus(gastoId, ExpenseStatus.PENDING_APPROVAL),
+                triggerCompartidos(copy.receiver_user_id, 'compartido.nuevo', { gastoId }),
+            ]);
 
-        return updated;
+            return updated;
+        });
     }
 }
