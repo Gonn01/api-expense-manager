@@ -10,7 +10,6 @@ import { CategoriasRepository } from "../repositories/categorias.repository.js";
 export function makeSettlementController() {
     const settlementRepository = new SettlementRepository();
 
-    // El cierre de sesión efectúa los pagos marcados: necesita GastosService.
     const gastosService = new GastosService({
         gastosRepository: new GastosRepository(),
         movementsRepository: new MovementsRepository(),

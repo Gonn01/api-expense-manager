@@ -9,12 +9,6 @@ export const pusher = new Pusher({
     useTLS: true,
 });
 
-/**
- * Avisa en tiempo real a `userId`. Dentro de una transacción el aviso sale
- * recién después del COMMIT (y no sale si hay ROLLBACK): el otro cliente no
- * debe enterarse de un cambio que todavía no existe, o que nunca existió.
- * Un fallo de Pusher no hace fallar la operación.
- */
 export const triggerCompartidos = (userId, event, data = {}) =>
     afterCommit(async () => {
         try {

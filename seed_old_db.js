@@ -4,17 +4,11 @@ import dayjs from "dayjs";
 
 const { Pool } = pkg;
 
-// ============================
-// CONFIG
-// ============================
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL, // 👈 Supabase
+    connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
 });
 
-// ============================
-// HELPERS
-// ============================
 function parseDate(value) {
     if (!value) return null;
 
@@ -46,11 +40,6 @@ function parseDate(value) {
     return null;
 }
 
-
-
-// ============================
-// MAIN
-// ============================
 async function run() {
     const raw = fs.readFileSync("./data.json", "utf8");
     const data = JSON.parse(raw);
@@ -60,9 +49,6 @@ async function run() {
     try {
         await client.query("BEGIN");
 
-        // ============================
-        // 1. USER
-        // ============================
         const {
             rows: [user],
         } = await client.query(
@@ -76,9 +62,6 @@ async function run() {
 
         const userId = user.id;
 
-        // ============================
-        // 2. FINANCIAL ENTITIES
-        // ============================
         for (const categoria of data.categorias) {
             const {
                 rows: [entity],
@@ -93,28 +76,9 @@ async function run() {
 
             const entityId = entity.id;
 
-            // ----------------------------
-            // entity logs
-            // ----------------------------
-            //     for (const log of categoria.logs || []) {
-            //         await client.query(
-            //             `
-            //   INSERT INTO financial_entities_logs (financial_entity_id, content)
-            //   VALUES ($1, $2)
-            //   `,
-            //             [entityId, log]
-            //         );
-            //     }
-
-            // ============================
-            // 3. PURCHASES
-            // ============================
             for (const compra of categoria.compras || []) {
                 const createdAt =
                     parseDate(compra.creationDate) ?? new Date();
-                // const {
-                //     rows: [purchase],
-                // } =
                 await client.query(
                     `
           INSERT INTO purchases (
@@ -155,20 +119,6 @@ async function run() {
                     ]
                 );
 
-                // const purchaseId = purchase.id;
-
-                // ----------------------------
-                // purchase logs
-                // ----------------------------
-                //     for (const log of compra.logs || []) {
-                //         await client.query(
-                //             `
-                // INSERT INTO purchases_logs (purchase_id, content)
-                // VALUES ($1, $2)
-                // `,
-                //             [purchaseId, log]
-                //         );
-                //     }
             }
         }
 
@@ -183,11 +133,7 @@ async function run() {
     }
 }
 
-// ============================
-// ENUM MAP
-// ============================
 function mapExpenseType(type) {
-    // Ajustá si tu enum cambia
     switch (type) {
         case 0:
             return "DEBO";

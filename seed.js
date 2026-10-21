@@ -21,7 +21,6 @@ const CATEGORY_PRESETS = [
 async function runSeed() {
     logGreen("🌱 Iniciando seed…");
 
-    // await executeQuery(`SET statement_timeout = 0`);
     await executeQuery(`
        TRUNCATE TABLE 
   purchases_categories,
@@ -33,7 +32,6 @@ async function runSeed() {
 RESTART IDENTITY CASCADE;
     `, []);
 
-    // ── CATEGORÍAS ────────────────────────────────────────────────────────────
     logCyan("➡ Creando categorías…");
 
     const categoriesByUser = {};
@@ -56,7 +54,6 @@ RESTART IDENTITY CASCADE;
 
     logGreen(`✔ Categorías creadas.`);
 
-    // ── ENTIDADES FINANCIERAS ─────────────────────────────────────────────────
     const entityNames = [
         "Banco Galicia",
         "Mercado Pago",
@@ -95,7 +92,6 @@ RESTART IDENTITY CASCADE;
 
     logGreen(`✔ ${entities.length} entidades creadas.`);
 
-    // ── GASTOS ────────────────────────────────────────────────────────────────
     logCyan("➡ Creando gastos…");
 
     const NUM_PURCHASES = 40;
@@ -149,7 +145,6 @@ RESTART IDENTITY CASCADE;
             );
         }
 
-        // Asignar 0-3 categorías aleatorias
         const userCategories = categoriesByUser[entity.user_id] ?? [];
         if (userCategories.length > 0) {
             const numCats = faker.number.int({ min: 0, max: Math.min(3, userCategories.length) });

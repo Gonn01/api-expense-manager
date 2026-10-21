@@ -4,24 +4,13 @@ import { DATABASE_URL } from "./config/env.js";
 import { logRed, logYellow } from "./utils/logs_custom.js";
 
 const connectionString = DATABASE_URL;
-// El pooler de Supabase corta las conexiones que quedan inactivas, y la
-// primera consulta después de eso fallaba (p. ej. el primer login con Google).
-// Cerramos nosotros las conexiones ociosas antes de que las corte el pooler, y
-// las renovamos cada tanto. `prepare: false` porque el pooler en modo
-// transacción (puerto 6543) no soporta prepared statements con nombre.
 const connection = postgres(connectionString, {
     ssl: "require",
-    idle_timeout: 20, // segundos sin uso antes de cerrar la conexión
-    max_lifetime: 60 * 30, // renovar cada conexión a los 30 minutos
+    idle_timeout: 20,
+    max_lifetime: 60 * 30,
     prepare: false,
 });
 
-/**
- * Transacción en curso del flujo async actual: { sql, afterCommit[] }.
- * `executeQuery` la toma de acá, así los repositorios no reciben la
- * transacción por parámetro: todo lo que corre dentro de `withTransaction`
- * participa de ella automáticamente.
- */
 const txStorage = new AsyncLocalStorage();
 
 const currentSql = () => txStorage.getStore()?.sql ?? connection;
@@ -47,15 +36,6 @@ export async function executeQuery(query, values = [], log = false) {
     }
 }
 
-/**
- * Corre `fn` dentro de una transacción: si `fn` termina bien se hace COMMIT;
- * si tira, ROLLBACK y el error se propaga. Anidada dentro de otra, se suma a
- * la de afuera (un solo COMMIT al final).
- *
- * Dentro de una transacción las consultas van por una sola conexión: se pueden
- * lanzar en paralelo con Promise.all (se encolan), salvo `bestEffort`, que
- * tiene que correr sola (ver abajo).
- */
 export async function withTransaction(fn) {
     if (txStorage.getStore()) return fn();
 
@@ -64,7 +44,6 @@ export async function withTransaction(fn) {
         txStorage.run({ sql, afterCommit: pending }, fn),
     );
 
-    // Recién confirmados los cambios se disparan los efectos externos.
     await Promise.allSettled(
         pending.map(async (cb) => {
             try {
@@ -77,27 +56,12 @@ export async function withTransaction(fn) {
     return result;
 }
 
-/**
- * Efecto externo (notificación en tiempo real, etc.) que solo tiene sentido si
- * los cambios se guardaron: dentro de una transacción se posterga hasta el
- * COMMIT (y se descarta si hay ROLLBACK); fuera de una, corre ya.
- */
 export function afterCommit(fn) {
     const store = txStorage.getStore();
     if (!store) return fn();
     store.afterCommit.push(fn);
 }
 
-/**
- * Escritura best-effort (p. ej. el historial de una entidad): si falla, no
- * debe arrastrar a la operación principal. En Postgres una consulta fallida
- * aborta toda la transacción aunque el error se atrape en JS, así que dentro
- * de una transacción `fn` corre en un SAVEPOINT: si falla, se deshace solo lo
- * suyo y el error se propaga para que el llamador lo registre y siga.
- *
- * Tiene que esperarse sola (no en un Promise.all con otras consultas de la
- * misma transacción): lo que corra en paralelo quedaría dentro del savepoint.
- */
 export async function bestEffort(fn) {
     const store = txStorage.getStore();
     if (!store) return fn();

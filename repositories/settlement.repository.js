@@ -1,8 +1,6 @@
 import { executeQuery } from "../db.js";
 
 export class SettlementRepository {
-    // `forUpdate` bloquea la fila hasta el fin de la transacción en curso (solo
-    // tiene efecto dentro de withTransaction): lo usa el cierre de la sesión.
     async getOpenSession(userId, { forUpdate = false } = {}) {
         const rows = await executeQuery(
             `SELECT id, user_id, status, started_at, finished_at
@@ -35,7 +33,6 @@ export class SettlementRepository {
         );
     }
 
-    // ¿El gasto está marcado en la sesión?
     async hasItem(sessionId, purchaseId) {
         const rows = await executeQuery(
             `SELECT 1 FROM settlement_session_items
@@ -50,14 +47,7 @@ export class SettlementRepository {
         return await this.upsertItems(sessionId, [purchaseId]);
     }
 
-    /**
-     * Marca varios gastos en la sesión en una sola consulta.
-     * quota_number = cuotas pagadas de cada gasto en este momento (si se llama
-     * tras pagar, ya incluye la recién pagada). Los ids tienen que llegar ya
-     * validados como enteros (el service verifica la pertenencia antes).
-     */
     async upsertItems(sessionId, purchaseIds) {
-        // Sin repetidos: ON CONFLICT no puede tocar la misma fila dos veces.
         const ids = [...new Set(purchaseIds.map(Number))];
         if (!ids.length) return [];
         const values = ids.map((_, i) => `($${i + 2}::int)`).join(", ");
@@ -133,8 +123,6 @@ export class SettlementRepository {
         );
     }
 
-    // Al cerrar una sesión, los gastos postergados del usuario vuelven a estar
-    // disponibles para la próxima.
     async releasePostponedForUser(userId) {
         return await executeQuery(
             `UPDATE purchases p

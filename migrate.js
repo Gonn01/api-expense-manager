@@ -5,15 +5,12 @@ import { MovementType, Currency, ExpenseType } from './utils/enums.js';
 
 const data = JSON.parse(readFileSync('./data.json', 'utf8'));
 
-// ── Mapeos ────────────────────────────────────────────────────────────────────
-
 const CURRENCY_MAP = {
     0: Currency.ARS,
     1: Currency.USD,
     2: Currency.EUR,
 };
 
-// type 0/2 = EGRESO, type 1/3 = INGRESO
 const TYPE_MAP = {
     0: ExpenseType.EGRESO,
     1: ExpenseType.INGRESO,
@@ -21,7 +18,6 @@ const TYPE_MAP = {
     3: ExpenseType.INGRESO,
 };
 
-// Parsea "06/02/2025 18:23" → Date
 function parseDate(str) {
     if (!str) return null;
     const match = str.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})/);
@@ -30,7 +26,6 @@ function parseDate(str) {
     return new Date(`${yyyy}-${mm}-${dd}T${hh}:${mi}:00`);
 }
 
-// Extrae fechas de pago de los logs de una compra
 function extractPaymentDates(logs) {
     return logs
         .filter((l) => l.includes('pago'))
@@ -42,7 +37,6 @@ function extractPaymentDates(logs) {
 async function runMigration() {
     logGreen('🚀 Iniciando migración…');
 
-    // ── Buscar usuario ─────────────────────────────────────────────────────────
     const userRows = await executeQuery(
         `SELECT id FROM users WHERE firebase_user_id = $1 LIMIT 1`,
         [data.idUser],
@@ -56,7 +50,6 @@ async function runMigration() {
     const userId = userRows[0].id;
     logBlue(`  Usuario encontrado: ID ${userId}`);
 
-    // ── Limpiar datos previos del usuario ──────────────────────────────────────
     logCyan('➡ Limpiando datos previos del usuario…');
 
     await executeQuery(`
@@ -99,7 +92,6 @@ async function runMigration() {
 
     logGreen('✔ Datos previos eliminados.');
 
-    // ── Migrar entidades y compras ─────────────────────────────────────────────
     logCyan(`➡ Migrando ${data.categorias.length} entidades…`);
 
     let totalPurchases = 0;
@@ -107,7 +99,6 @@ async function runMigration() {
     let skipped = 0;
 
     for (const cat of data.categorias) {
-        // Fecha de creación de la entidad (primer log)
         const entityCreatedAt = parseDate(cat.logs?.[0]) ?? new Date();
 
         const entityRows = await executeQuery(
@@ -162,14 +153,12 @@ async function runMigration() {
             const purchaseId = purchaseRows[0].id;
             totalPurchases++;
 
-            // Movimiento de creación
             await executeQuery(
                 `INSERT INTO purchases_movements (created_at, purchase_id, movement_type, amount, payment_date)
                  VALUES ($1, $2, $3, NULL, NULL)`,
                 [createdAt, purchaseId, MovementType.CREATION],
             );
 
-            // Movimientos de pago (uno por cuota pagada)
             const amountPerQuota = quotas > 0 ? amount / quotas : amount;
             const paidCount = compra.quotasPayed ?? 0;
 

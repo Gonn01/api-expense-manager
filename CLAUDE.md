@@ -28,6 +28,12 @@ When making a contract-changing change here, call out explicitly whether the web
 
 At the end of every task, state which documentation files were updated, or say explicitly that none needed updating and why.
 
+## No code comments rule
+
+**Do not write comments in code** — in any of the three projects (this API, the web app, the Flutter app). No `//`, `/* */` or JSDoc `/** */`, not even section markers. Code must explain itself through names and structure; the "why" of a business rule belongs in the web repo's `docs\` or the architecture guide, not in the source. When editing a file that still has a comment, remove it.
+
+Only tool directives are allowed (`eslint-disable*`).
+
 ## Commands
 
 ```

@@ -24,8 +24,6 @@ describe("UserController", () => {
         controller = new UserController(userService);
     });
 
-    // ─── updatePreferredCurrency ─────────────────────────────────────────────
-
     describe("updatePreferredCurrency", () => {
         it("responde con los datos actualizados cuando todo está bien", async () => {
             const req = makeReq({ body: { preferred_currency: "ARS" } });
@@ -72,8 +70,6 @@ describe("UserController", () => {
             expect(res.json).toHaveBeenCalledWith({ error: "Error en el servidor" });
         });
     });
-
-    // ─── updateSueldo ────────────────────────────────────────────────────────
 
     describe("updateSueldo", () => {
         it("responde con los datos actualizados cuando todo está bien", async () => {

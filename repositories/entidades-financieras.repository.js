@@ -1,11 +1,6 @@
 import { executeQuery } from "../db.js";
 
 export class EntidadesFinancierasRepository {
-    // Listado con los contadores ya agregados en una sola query (antes era un
-    // N+1: 1 query + 2 por entidad, secuenciales -> ~10s con la DB remota).
-    // Trae activas y eliminadas juntas (campo `deleted`); los clientes separan.
-    //   cantidad      = compras ACTIVE no saldadas (o gasto fijo)
-    //   pending_count = compras PENDING_APPROVAL
     async listar(userId) {
         return await executeQuery(
             `SELECT fe.id, fe.name, fe.linked_user_id, fe.is_favorite, fe.deleted,

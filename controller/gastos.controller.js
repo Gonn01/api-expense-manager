@@ -78,7 +78,6 @@ export class GastosController {
             } = req.body ?? {};
             const { userId } = req.session;
 
-            // Los campos que no vienen quedan como están (los valida el service).
             const response = await this.gastosService.update(id, userId, {
                 name, amount, image_url, fixed_expense, type, category_ids, payed_quotas,
                 number_of_quotas, currency_type, financial_entity_id, apply_to_linked,

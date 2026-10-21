@@ -8,7 +8,6 @@ export const MovementType = Object.freeze({
     EDITED:           'EDITED',
     POSTPONED:        'POSTPONED',
     UNPOSTPONED:      'UNPOSTPONED',
-    // Historial de entidades financieras
     LINK:             'LINK',
     UNLINK:           'UNLINK',
     PURCHASE_CREATED: 'PURCHASE_CREATED',

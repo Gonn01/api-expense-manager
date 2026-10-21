@@ -1,8 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// postgres.js simulado: `begin` y `savepoint` corren el callback con un `sql`
-// propio (para ver por cuál pasó cada consulta) y, si el callback tira,
-// simulan el ROLLBACK propagando el error.
 const calls = [];
 const makeSql = (name) => ({
     name,

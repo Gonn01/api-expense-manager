@@ -31,8 +31,6 @@ describe("GastosController", () => {
         controller = new GastosController(service);
     });
 
-    // ─── crear ────────────────────────────────────────────────────────────────
-
     describe("crear", () => {
         const validBody = {
             financial_entity_id: 1,
@@ -107,8 +105,6 @@ describe("GastosController", () => {
         });
     });
 
-    // ─── getById ──────────────────────────────────────────────────────────────
-
     describe("getById", () => {
         it("responde con el gasto encontrado", async () => {
             const req = makeReq({ params: { id: "10" } });
@@ -133,8 +129,6 @@ describe("GastosController", () => {
             expect(res.json).toHaveBeenCalledWith({ error: "Error en el servidor" });
         });
     });
-
-    // ─── update ───────────────────────────────────────────────────────────────
 
     describe("update", () => {
         it("responde con el gasto actualizado", async () => {
@@ -161,8 +155,6 @@ describe("GastosController", () => {
         });
     });
 
-    // ─── delete ───────────────────────────────────────────────────────────────
-
     describe("delete", () => {
         it("responde con confirmación al eliminar el gasto", async () => {
             const req = makeReq({ params: { id: "10" } });
@@ -186,8 +178,6 @@ describe("GastosController", () => {
             expect(res.json).toHaveBeenCalledWith({ error: "Error en el servidor" });
         });
     });
-
-    // ─── settleQuota ───────────────────────────────────────────────────────────
 
     describe("settleQuota", () => {
         it("responde con el resultado del pago de cuota", async () => {
@@ -214,8 +204,6 @@ describe("GastosController", () => {
         });
     });
 
-    // ─── refundCuota ──────────────────────────────────────────────────────────
-
     describe("refundCuota", () => {
         it("revierte la cuota en nombre del usuario de la sesión", async () => {
             const req = makeReq({ params: { id: "10" } });
@@ -229,8 +217,6 @@ describe("GastosController", () => {
             expect(res.json).toHaveBeenCalledWith({ message: "Cuota revertida con éxito", data: mockResult[0] });
         });
     });
-
-    // ─── actualizarCategorias ─────────────────────────────────────────────────
 
     describe("actualizarCategorias", () => {
         it("actualiza las categorías en nombre del usuario de la sesión", async () => {
@@ -253,8 +239,6 @@ describe("GastosController", () => {
             expect(service.actualizarCategorias).not.toHaveBeenCalled();
         });
     });
-
-    // ─── settleQuotasLote ─────────────────────────────────────────────────────
 
     describe("settleQuotasLote", () => {
         it("responde con los gastos actualizados en lote", async () => {

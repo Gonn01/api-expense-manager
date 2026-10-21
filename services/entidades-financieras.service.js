@@ -4,7 +4,6 @@ import { logRed } from "../utils/logs_custom.js";
 import { withTransaction, bestEffort } from "../db.js";
 
 export class EntidadesFinancierasService {
-  // `runInTransaction`: ver GastosService (los tests pasan una que solo ejecuta).
   constructor({
     entidadesFinancierasRepository,
     gastosRepository,
@@ -19,8 +18,6 @@ export class EntidadesFinancierasService {
     this.tx = runInTransaction;
   }
 
-  // Registra un movimiento en el historial de la entidad. Best-effort: si falla
-  // el log no rompemos la operación real (ni su transacción: corre en un savepoint).
   async #log(entidadId, type, detail = null) {
     if (!entidadId) return;
     try {
@@ -31,8 +28,6 @@ export class EntidadesFinancierasService {
   }
 
   async listar(userId) {
-    // El repositorio ya trae `cantidad` y `pending_count` agregados en una
-    // sola query (ver EntidadesFinancierasRepository.listar).
     return await this.entidadesFinancierasRepository.listar(userId);
   }
 

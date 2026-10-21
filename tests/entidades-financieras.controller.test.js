@@ -29,8 +29,6 @@ describe("EntidadesFinancierasController", () => {
         controller = new EntidadesFinancierasController(service);
     });
 
-    // ─── listar ───────────────────────────────────────────────────────────────
-
     describe("listar", () => {
         it("responde con el listado de entidades del usuario", async () => {
             const req = makeReq();
@@ -59,8 +57,6 @@ describe("EntidadesFinancierasController", () => {
         });
     });
 
-    // ─── obtenerPorId ─────────────────────────────────────────────────────────
-
     describe("obtenerPorId", () => {
         it("responde con la entidad solicitada", async () => {
             const req = makeReq({ params: { id: "5" } });
@@ -88,8 +84,6 @@ describe("EntidadesFinancierasController", () => {
             expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.stringContaining("Error en el servidor") }));
         });
     });
-
-    // ─── crear ────────────────────────────────────────────────────────────────
 
     describe("crear", () => {
         it("responde 201 con la entidad creada", async () => {
@@ -143,8 +137,6 @@ describe("EntidadesFinancierasController", () => {
             );
         });
     });
-
-    // ─── actualizar ───────────────────────────────────────────────────────────
 
     describe("actualizar", () => {
         it("responde con la entidad actualizada e incluye movimientos", async () => {
@@ -202,8 +194,6 @@ describe("EntidadesFinancierasController", () => {
             );
         });
     });
-
-    // ─── eliminar ─────────────────────────────────────────────────────────────
 
     describe("eliminar", () => {
         it("responde con confirmación al eliminar la entidad", async () => {

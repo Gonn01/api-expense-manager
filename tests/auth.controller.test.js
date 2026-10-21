@@ -25,8 +25,6 @@ describe("AuthController", () => {
         controller = new AuthController(authService);
     });
 
-    // ─── register ────────────────────────────────────────────────────────────
-
     describe("register", () => {
         it("responde 200 cuando el registro es exitoso", async () => {
             const req = makeReq({ body: { name: "Juan", email: "juan@test.com", password: "1234" } });
@@ -72,8 +70,6 @@ describe("AuthController", () => {
         });
     });
 
-    // ─── login ───────────────────────────────────────────────────────────────
-
     describe("login", () => {
         it("responde con token cuando el login es exitoso", async () => {
             const req = makeReq({ body: { email: "juan@test.com", password: "1234" } });
@@ -108,8 +104,6 @@ describe("AuthController", () => {
             expect(res.json).toHaveBeenCalledWith({ error: "Error en el servidor" });
         });
     });
-
-    // ─── firebaseLogin ───────────────────────────────────────────────────────
 
     describe("firebaseLogin", () => {
         it("responde con token cuando el login firebase es exitoso", async () => {

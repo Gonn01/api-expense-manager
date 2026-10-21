@@ -16,10 +16,6 @@ const CALCULATED_FIELDS = `
   (SELECT lnk.type FROM purchases lnk WHERE lnk.id = p.linked_purchase_id) AS linked_type
 `;
 
-/**
- * Asegura las columnas extra de "purchases" que no vienen del esquema base.
- * Se llama una vez al arrancar el server (index.js), igual que ensureReconcileSchema.
- */
 export async function ensureGastosSchema() {
   const steps = [
     ["purchases.linked_purchase_id", `
@@ -40,8 +36,6 @@ export async function ensureGastosSchema() {
     ["financial_entities.is_favorite", `
       ALTER TABLE financial_entities ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN NOT NULL DEFAULT false
     `],
-    // Índices para el listado de entidades y los CALCULATED_FIELDS (que
-    // cuentan movimientos por compra en casi todas las queries de gastos).
     ["idx purchases(financial_entity_id, status)", `
       CREATE INDEX IF NOT EXISTS purchases_entity_status_idx
         ON purchases (financial_entity_id, status) WHERE deleted = false
@@ -61,8 +55,6 @@ export async function ensureGastosSchema() {
     }
   }
 
-  // "purchases_movements.movement_type" es un enum de Postgres: hay que registrar
-  // el valor PENDING_PAYMENT antes de poder insertarlo.
   for (const value of ["PENDING_PAYMENT", "EDITED", "RESTORE", "DELETE"]) {
     try {
       await ensureMovementTypeValue(value);
@@ -89,7 +81,7 @@ async function ensureMovementTypeValue(value) {
   `);
 
   const meta = typeRows[0];
-  if (!meta || meta.typtype !== "e") return; // no es enum: nada que asegurar
+  if (!meta || meta.typtype !== "e") return;
 
   const exists = await executeQuery(
     `
@@ -104,7 +96,6 @@ async function ensureMovementTypeValue(value) {
 
   if (exists.length) return;
 
-  // Sin IF NOT EXISTS para compatibilidad con Postgres < 12; ya validamos arriba.
   await executeQuery(`ALTER TYPE "${meta.typname}" ADD VALUE '${value}'`);
 }
 
@@ -118,8 +109,6 @@ export class GastosRepository {
     );
   }
 
-  // De una lista de ids, devuelve los que son gastos no eliminados de una
-  // entidad (no eliminada) del usuario.
   async getOwnedIds(ids, userId) {
     if (!ids.length) return [];
     const placeholders = ids.map((_, i) => `$${i + 2}`).join(", ");
@@ -133,8 +122,6 @@ export class GastosRepository {
     );
   }
 
-  // Varios gastos no eliminados con sus campos calculados, en una sola consulta.
-  // `owned` indica si el gasto es de una entidad (no eliminada) del usuario.
   async getByIdsWithOwner(ids, userId) {
     if (!ids.length) return [];
     const placeholders = ids.map((_, i) => `$${i + 2}`).join(", ");
@@ -148,7 +135,6 @@ export class GastosRepository {
     );
   }
 
-  // Igual que getById pero sin filtrar por `deleted` (para restaurar).
   async getByIdIncludingDeleted(id) {
     return await executeQuery(
       `SELECT p.*, ${CALCULATED_FIELDS}
@@ -192,7 +178,6 @@ export class GastosRepository {
     );
   }
 
-  // Gastos eliminados (soft-delete) de una entidad, cualquier estado.
   async getDeletedByEntidad(entidadId) {
     return await executeQuery(
       `SELECT p.*, ${CALCULATED_FIELDS},
@@ -210,7 +195,6 @@ export class GastosRepository {
     );
   }
 
-  // Restaura un gasto eliminado. Devuelve la fila o vacío si no estaba eliminado.
   async restore(id) {
     return await executeQuery(
       `UPDATE purchases SET deleted = false WHERE id = $1 AND deleted = true RETURNING id`,
@@ -251,8 +235,6 @@ export class GastosRepository {
     return updated;
   }
 
-  // Reemplaza los campos editables del gasto. El service ya completó con los
-  // valores actuales los que no venían en el pedido: acá se graban todos.
   async update(id, { name, amount, image_url, fixed_expense, type, number_of_quotas, currency_type, financial_entity_id }) {
     return await executeQuery(
       `UPDATE purchases
@@ -281,7 +263,6 @@ export class GastosRepository {
     );
   }
 
-  // Vincula dos compras entre sí (relación mutua): a.linked = b y b.linked = a.
   async linkPurchases(aId, bId) {
     return await executeQuery(
       `UPDATE purchases
@@ -291,7 +272,6 @@ export class GastosRepository {
     );
   }
 
-  // Rompe el vínculo tanto desde la compra $1 como desde la que la apuntaba.
   async unlink(id) {
     return await executeQuery(
       `UPDATE purchases SET linked_purchase_id = NULL
@@ -357,8 +337,6 @@ export class GastosRepository {
     );
   }
 
-  // Marca / desmarca un gasto como "postergado" (fuera del alcance de la
-  // sesión de cuentas actual o de la próxima que se abra).
   async setPostponed(id, value) {
     return await executeQuery(
       `UPDATE purchases p
@@ -379,7 +357,6 @@ export class GastosRepository {
     );
   }
 
-  // Igual que clearFavoriteIfFinalized, para varios gastos en una sola consulta.
   async clearFavoritesIfFinalized(purchaseIds) {
     if (!purchaseIds.length) return [];
     const placeholders = purchaseIds.map((_, i) => `$${i + 1}`).join(", ");
@@ -396,7 +373,6 @@ export class GastosRepository {
     );
   }
 
-  // Un gasto en cuotas que quedó totalmente pagado deja de ser favorito.
   async clearFavoriteIfFinalized(purchaseId) {
     return await executeQuery(
       `UPDATE purchases
@@ -410,7 +386,6 @@ export class GastosRepository {
       [purchaseId]
     );
   }
-
 
   async aprobarGasto(id, financialEntityId) {
     return await executeQuery(
@@ -464,15 +439,7 @@ export class GastosRepository {
     );
   }
 
-  /**
-   * Dada una compra que forma parte de un par compartido (original <-> copia),
-   * devuelve el id de la compra hermana ACTIVA y el id del usuario del otro lado
-   * (el que debe confirmar los pagos). Devuelve [] si la compra no está compartida
-   * o la hermana no está activa.
-   */
   async getSharedSiblings(purchaseIds) {
-    // Igual que getSharedSibling, para varios gastos en una sola consulta:
-    // una fila por gasto compartido (`purchase_id`), los demás no aparecen.
     if (!purchaseIds.length) return [];
     const placeholders = purchaseIds.map((_, i) => `$${i + 1}`).join(", ");
     return await executeQuery(
@@ -513,11 +480,6 @@ export class GastosRepository {
     );
   }
 
-  /**
-   * Pagos pendientes de confirmación relacionados con el usuario.
-   *  - porConfirmar: los registró la otra persona y este usuario debe confirmarlos.
-   *  - esperando: los registró este usuario y espera confirmación del otro.
-   */
   async getPagosCompartidos(userId) {
     return await executeQuery(
       `WITH pend AS (

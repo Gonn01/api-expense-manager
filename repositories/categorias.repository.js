@@ -30,9 +30,6 @@ export class CategoriasRepository {
         );
     }
 
-    // Reemplaza las categorías del gasto. Borrar e insertar van en una misma
-    // transacción (o se suman a la de afuera): si el INSERT falla, el gasto no
-    // queda sin categorías.
     async setCategoriasForGasto(gastoId, categoryIds) {
         return withTransaction(async () => {
             await executeQuery(

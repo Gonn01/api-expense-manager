@@ -1,7 +1,3 @@
-/**
- * Códigos de estado HTTP. Usalos siempre en vez del número mágico:
- * `res.status(HttpStatus.CREATED)` en vez de `res.status(201)`.
- */
 export const HttpStatus = Object.freeze({
     OK:                    200,
     CREATED:               201,

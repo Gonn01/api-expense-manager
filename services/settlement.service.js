@@ -1,7 +1,6 @@
 import { customError, ErrorCode } from "../utils/errors.js";
 import { withTransaction } from "../db.js";
 
-// El driver puede devolver columnas JSONB como string; normalizamos.
 function parseJson(value, fallback) {
     if (value == null) return fallback;
     if (typeof value === "string") {
@@ -40,7 +39,6 @@ function buildTotals(items) {
 }
 
 export class SettlementService {
-    // `runInTransaction`: ver GastosService (los tests pasan una que solo ejecuta).
     constructor({ settlementRepository, gastosService, runInTransaction = withTransaction }) {
         this.settlementRepository = settlementRepository;
         this.gastosService = gastosService;
@@ -67,8 +65,6 @@ export class SettlementService {
     async setItem(userId, purchaseId, checked) {
         const session = await this.#requireOpenSession(userId);
         if (checked) {
-            // Solo se pueden marcar gastos propios. Desmarcar no se valida:
-            // únicamente saca la marca de la sesión del propio usuario.
             await this.gastosService.assertOwnedAll([purchaseId], userId);
             await this.settlementRepository.upsertItem(session.id, purchaseId);
         } else {
@@ -94,22 +90,13 @@ export class SettlementService {
     }
 
     async finishSession(userId) {
-        // Todo el cierre es una transacción: pagos, snapshot y cierre de la sesión
-        // se guardan juntos o no se guarda nada. La sesión se bloquea (FOR UPDATE)
-        // para que dos cierres simultáneos no paguen dos veces: el segundo espera
-        // y, cuando entra, la sesión ya no está abierta.
         return this.tx(async () => {
             const session = await this.settlementRepository.getOpenSession(userId, { forUpdate: true });
             if (!session) throw customError(ErrorCode.NO_OPEN_SESSION);
 
-            // Pago diferido: marcar un gasto durante la sesión no lo paga. Recién al
-            // cerrar la sesión se registran los pagos reales de todo lo marcado.
             await this.#effectMarkedPayments(userId, session.id);
 
             const src = await this.settlementRepository.getSnapshotSourceItems(session.id);
-            // Sin gastos que registrar no se guarda un resumen vacío: la sesión queda
-            // abierta para que el usuario marque algo o la descarte. Esto cubre también
-            // el caso en que la limpieza de arriba sacó todos los marcados.
             if (src.length === 0) throw customError(ErrorCode.SETTLEMENT_EMPTY);
 
             const items = src.map((r) => ({
@@ -142,7 +129,6 @@ export class SettlementService {
 
             await Promise.all([
                 this.settlementRepository.finishSession(session.id),
-                // Los gastos postergados vuelven a estar disponibles para la próxima sesión.
                 this.settlementRepository.releasePostponedForUser(userId),
             ]);
             return normalizeSnapshot(snapshot);
@@ -173,19 +159,12 @@ export class SettlementService {
         return session;
     }
 
-    /**
-     * Efectúa el pago real de cada gasto marcado en la sesión. Los gastos que
-     * no se pueden pagar (borrados, ajenos, postergados o con todas las cuotas pagas)
-     * se sacan de la sesión para que no ensucien el snapshot.
-     */
     async #effectMarkedPayments(userId, sessionId) {
         if (!this.gastosService) return;
 
         const items = await this.settlementRepository.getSessionItems(sessionId);
         if (!items.length) return;
 
-        // Todos los pagos de una vez (un solo INSERT: si falla, no se registra
-        // ninguno y la sesión sigue abierta).
         const { kept, discarded } = await this.gastosService.effectSettlementBatch(
             items.map((it) => it.purchase_id),
             userId,
@@ -194,7 +173,6 @@ export class SettlementService {
 
         await Promise.all([
             this.settlementRepository.removeItems(sessionId, discarded),
-            // Releer quota_number ahora que los pagos quedaron registrados.
             this.settlementRepository.upsertItems(sessionId, kept),
         ]);
     }

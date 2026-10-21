@@ -5,7 +5,6 @@ import { logRed } from "../utils/logs_custom.js";
 import { withTransaction, bestEffort } from "../db.js";
 
 export class CompartidosService {
-    // `runInTransaction`: ver GastosService (los tests pasan una que solo ejecuta).
     constructor({ gastosRepository, entidadesFinancierasRepository, movementsRepository, runInTransaction = withTransaction }) {
         this.gastosRepository = gastosRepository;
         this.entidadesFinancierasRepository = entidadesFinancierasRepository;
@@ -109,8 +108,6 @@ export class CompartidosService {
 
             const notif = notifRows[0];
 
-            // El historial de la entidad es best-effort y va solo, en su savepoint
-            // (no en el Promise.all: ver bestEffort en db.js).
             try {
                 await bestEffort(() =>
                     this.movementsRepository.createEntidadLog(

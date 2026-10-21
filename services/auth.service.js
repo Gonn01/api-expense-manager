@@ -42,8 +42,6 @@ export class AuthService {
         if (existing.length > 0) {
             user = existing[0];
         } else {
-            // No hay cuenta con este firebaseId. Antes de crear una nueva, buscamos
-            // por email para no duplicar una cuenta creada con credenciales.
             const byEmail = email ? await this.authRepository.findUserByEmail(email) : [];
 
             if (byEmail.length > 0) {

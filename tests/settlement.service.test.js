@@ -20,7 +20,6 @@ describe("SettlementService: marcar gastos en la sesión", () => {
             removeItems: vi.fn(),
         };
         gastosService = { assertOwnedAll: vi.fn(async () => {}) };
-        // Sin base: la "transacción" solo ejecuta la operación.
         service = new SettlementService({ settlementRepository, gastosService, runInTransaction: (fn) => fn() });
     });
 

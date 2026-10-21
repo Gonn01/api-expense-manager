@@ -17,8 +17,6 @@ app.use((req, res, next) => {
 
 app.use("/api", routesIndex);
 
-// Red de seguridad: si un handler async lanza sin capturar, traduce el error
-// a una respuesta HTTP en vez de tumbar el request.
 app.use(errorMiddleware);
 
 app.listen(port, () => {

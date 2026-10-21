@@ -60,10 +60,6 @@ export class MovementsRepository {
         );
     }
 
-    /**
-     * Inserta varios movimientos en una sola consulta (todo o nada).
-     * @param {{ gastoId, movementType, amount?, paymentDate?, createdByUserId? }[]} logs
-     */
     async createGastoLogs(logs) {
         if (!logs.length) return [];
         const values = [];

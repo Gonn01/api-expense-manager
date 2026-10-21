@@ -7,7 +7,6 @@ import { GastosService } from "../services/gastos.service.js";
 const OWNER = 1;
 const INTRUSO = 2;
 
-// Gasto en cuotas de la entidad 7, que es del usuario OWNER.
 function makeGasto(overrides = {}) {
     return {
         id: 10,
@@ -43,13 +42,11 @@ describe("GastosService", () => {
 
         gastosRepository = {
             getById: vi.fn(async () => [gasto]),
-            // Igual que getById, con `owned`: el gasto es de OWNER si está en la entidad 7.
             getByIdsWithOwner: vi.fn(async (ids, userId) =>
                 ids.map(String).includes(String(gasto.id))
                     ? [{ ...gasto, owned: userId === OWNER && gasto.financial_entity_id === 7 }]
                     : [],
             ),
-            // Los gastos 10 y 11 son de OWNER; cualquier otro, no.
             getOwnedIds: vi.fn(async (ids, userId) =>
                 userId === OWNER ? ids.filter((id) => ["10", "11"].includes(id)).map((id) => ({ id: Number(id) })) : [],
             ),
@@ -73,7 +70,6 @@ describe("GastosService", () => {
             deletePayments: vi.fn(),
             deleteLastPayment: vi.fn(async () => [{ amount: 100 }]),
         };
-        // La entidad 7 solo existe para OWNER.
         entidadesFinancierasRepository = {
             getById: vi.fn(async (entidadId, userId) =>
                 entidadId === 7 && userId === OWNER ? [{ id: 7, user_id: OWNER }] : [],
@@ -96,12 +92,9 @@ describe("GastosService", () => {
             entidadesFinancierasRepository,
             categoriasRepository,
             settlementRepository,
-            // Sin base: la "transacción" solo ejecuta la operación.
             runInTransaction: (fn) => fn(),
         });
     });
-
-    // ─── Verificación de dueño ────────────────────────────────────────────────
 
     describe("verificación de dueño", () => {
         const operaciones = {
@@ -200,8 +193,6 @@ describe("GastosService", () => {
         });
     });
 
-    // ─── assertOwnedAll ───────────────────────────────────────────────────────
-
     describe("assertOwnedAll", () => {
         it("pasa si todos los gastos son del usuario", async () => {
             await expect(service.assertOwnedAll([10, 11], OWNER)).resolves.toBeUndefined();
@@ -222,8 +213,6 @@ describe("GastosService", () => {
             await expect(service.assertOwnedAll([10], undefined)).rejects.toMatchObject({ code: "NO_AUTORIZADO" });
         });
     });
-
-    // ─── Cuotas restantes ─────────────────────────────────────────────────────
 
     describe("settleQuota: cuotas restantes", () => {
         it("pago directo: registra el pago si quedan cuotas", async () => {
@@ -279,8 +268,6 @@ describe("GastosService", () => {
         });
     });
 
-    // ─── Pago al cerrar la sesión de cuentas ──────────────────────────────────
-
     describe("effectSettlementBatch", () => {
         const PAGO = expect.objectContaining({ gastoId: 10, movementType: "PAYMENT", amount: 100 });
 
@@ -335,8 +322,6 @@ describe("GastosService", () => {
             expect(movementsRepository.createGastoLogs).toHaveBeenCalledWith([]);
         });
     });
-
-    // ─── update ───────────────────────────────────────────────────────────────
 
     describe("update", () => {
         const rejectsLocked = async (input, field) => {

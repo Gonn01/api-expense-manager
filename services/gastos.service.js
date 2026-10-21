@@ -5,11 +5,6 @@ import { logRed } from "../utils/logs_custom.js";
 import { withTransaction, bestEffort } from "../db.js";
 
 export class GastosService {
-    /**
-     * `runInTransaction` corre una operación con varias escrituras como una
-     * sola transacción (todo o nada). Por defecto es la real de db.js; los
-     * tests unitarios pasan una que solo ejecuta la función.
-     */
     constructor({
         gastosRepository,
         movementsRepository,
@@ -26,8 +21,6 @@ export class GastosService {
         this.tx = runInTransaction;
     }
 
-    // Registra un movimiento en el historial de una entidad. Best-effort: si
-    // falla no rompe la operación (ni aborta su transacción: corre en un savepoint).
     async #logEntidad(entidadId, type, detail = null) {
         if (!entidadId) return;
         try {
@@ -37,8 +30,6 @@ export class GastosService {
         }
     }
 
-    // "Modo hacer cuentas": el pago en lote (dashboard) exige una sesión abierta.
-    // Devuelve la sesión abierta o tira SETTLEMENT_REQUIRED.
     async requireSettlementSession(userId) {
         if (!this.settlementRepository) return null;
         if (!userId) throw customError(ErrorCode.SETTLEMENT_REQUIRED);
@@ -47,15 +38,11 @@ export class GastosService {
         return session;
     }
 
-    // Devuelve la sesión de cuentas abierta del usuario, o null si no hay.
     async getOpenSettlementSession(userId) {
         if (!this.settlementRepository || !userId) return null;
         return await this.settlementRepository.getOpenSession(userId);
     }
 
-    // ¿El gasto es del usuario? Lo es si su entidad le pertenece. `allowReceiver`
-    // suma el caso de la copia compartida todavía sin entidad (pendiente de
-    // aprobación o rechazada), que es de quien la recibió: solo para lectura.
     async #assertOwner(gasto, userId, { allowReceiver = false } = {}) {
         if (userId == null) throw customError(ErrorCode.NO_AUTORIZADO);
 
@@ -72,7 +59,6 @@ export class GastosService {
         throw customError(ErrorCode.NO_AUTORIZADO);
     }
 
-    // Trae un gasto no eliminado verificando que sea del usuario.
     async #getOwned(id, userId, options) {
         const rows = await this.gastosRepository.getById(id);
         if (rows.length === 0) throw customError(ErrorCode.GASTO_NOT_FOUND);
@@ -80,9 +66,6 @@ export class GastosService {
         return rows;
     }
 
-    // Como #getOwned, pero trae el gasto y verifica el dueño en una sola
-    // consulta. No admite al receptor de una copia sin entidad: es para
-    // operaciones que modifican el gasto.
     async #getOwnedWithOwner(id, userId) {
         if (userId == null) throw customError(ErrorCode.NO_AUTORIZADO);
         if (!/^\d+$/.test(String(id))) throw customError(ErrorCode.GASTO_NOT_FOUND);
@@ -94,15 +77,11 @@ export class GastosService {
         return [gasto];
     }
 
-    // Verifica en una sola consulta que todos los gastos sean del usuario.
-    // Lo usa SettlementService antes de marcar gastos en la sesión.
     async assertOwnedAll(ids, userId) {
         if (userId == null) throw customError(ErrorCode.NO_AUTORIZADO);
 
         const wanted = [...new Set(ids.map(String))];
         if (wanted.length === 0) return;
-        // Un id que no es un entero no puede ser un gasto del usuario (y no
-        // debe llegar a la consulta).
         if (wanted.some((id) => !/^\d+$/.test(id))) throw customError(ErrorCode.NO_AUTORIZADO);
 
         const rows = await this.gastosRepository.getOwnedIds(wanted, userId);
@@ -110,7 +89,6 @@ export class GastosService {
         if (wanted.some((id) => !owned.has(id))) throw customError(ErrorCode.NO_AUTORIZADO);
     }
 
-    // Un gasto no fijo no admite más pagos que su cantidad de cuotas.
     #assertQuotasRestantes(gasto) {
         if (!gasto.fixed_expense && Number(gasto.payed_quotas) >= Number(gasto.number_of_quotas)) {
             throw customError(ErrorCode.GASTO_YA_SALDADO);
@@ -120,7 +98,6 @@ export class GastosService {
     async getById(id, userId) {
         const row = await this.#getOwned(id, userId, { allowReceiver: true });
 
-        // La copia compartida todavía sin entidad no se puede editar: sin bloqueos.
         const [movements, categories, editLocks] = await Promise.all([
             this.movementsRepository.getMovementsByGasto(id),
             this.categoriasRepository.getCategoriasByGasto(id),
@@ -129,22 +106,15 @@ export class GastosService {
 
         row[0].movements = movements;
         row[0].categories = categories;
-        // Campos que los clientes tienen que mostrar deshabilitados: { campo: motivo }.
         row[0].edit_locks = editLocks;
         return row[0];
     }
 
-    // Etiqueta del modo de pago de un gasto, para el historial de cambios.
     #modoLabel(fixed, quotas) {
         if (fixed) return "Fijo";
         return Number(quotas) > 1 ? `En cuotas (${quotas})` : "Pago único";
     }
 
-    /**
-     * Valida el pedido de edición y lo completa con los valores actuales del
-     * gasto: un campo que no viene (undefined) queda como está. Así un cliente
-     * puede mandar solo lo que cambió sin pisar el resto con NULL.
-     */
     #normalizarUpdate(input, current) {
         const invalid = (field, message) =>
             customError(ErrorCode.VALIDATION_ERROR, { message, details: { field } });
@@ -193,7 +163,6 @@ export class GastosService {
                 throw invalid("number_of_quotas", "La cantidad de cuotas debe ser un entero positivo.");
             }
         }
-        // Un gasto no fijo tiene al menos una cuota: 0 es un "pago único".
         if (!fixed_expense && number_of_quotas < 1) number_of_quotas = 1;
 
         let payed_quotas;
@@ -236,8 +205,6 @@ export class GastosService {
         };
     }
 
-    // Pago directo: si el gasto estaba postergado se levanta la postergación y
-    // queda registrado en el historial del gasto, justo antes del pago.
     async #levantarPostergacionParaPagar(gasto) {
         if (!gasto.is_postponed) return;
         await this.gastosRepository.setPostponed(gasto.id, false);
@@ -249,27 +216,11 @@ export class GastosService {
         );
     }
 
-    // Modo de un gasto: fijo, en cuotas o pago único.
     #modo(fixed, quotas) {
         if (fixed) return "fixed";
         return Number(quotas) > 1 ? "installment" : "single";
     }
 
-    /**
-     * Campos del gasto que no se pueden editar, con el motivo:
-     * `{ campo: "motivo para mostrar" }`. Los campos son los del pedido de
-     * edición, más `mode` (fijo / en cuotas / pago único).
-     *
-     * Reglas (gana el primer motivo que aplica):
-     *  - Pagos: siempre. Se registran con pagar y se deshacen con revertir.
-     *  - Finalizado (todas las cuotas pagas): solo nombre y categorías.
-     *  - Compartido con otro usuario: solo nombre y categorías (la edición
-     *    no llega a la copia de la otra persona).
-     *  - Marcado en la sesión de cuentas abierta: monto, moneda y tipo.
-     *  - Con pagos (confirmados o pendientes): moneda, tipo y modo.
-     *
-     * Nombre, categorías e imagen nunca se bloquean.
-     */
     async #editLocks(gasto, userId) {
         const paid = Number(gasto.payed_quotas) || 0;
         const pending = Number(gasto.pending_quotas) || 0;
@@ -313,12 +264,6 @@ export class GastosService {
         return locks;
     }
 
-    /**
-     * Edita un gasto. `input` trae los campos del pedido: los que no vienen
-     * quedan como están. Un campo bloqueado (ver #editLocks) solo se acepta
-     * si llega con el mismo valor que ya tiene. Con `apply_to_linked`, los
-     * mismos cambios van al movimiento espejo, y valen también sus bloqueos.
-     */
     async update(id, userId, input = {}) {
         return this.tx(async () => {
             const [current] = await this.#getOwned(id, userId);
@@ -328,12 +273,10 @@ export class GastosService {
             const applyToLinked = Boolean(input.apply_to_linked) && Boolean(linkedId);
             const [mirror] = applyToLinked ? await this.gastosRepository.getById(linkedId) : [];
 
-            // ─── Bloqueos ───────────────────────────────────────────────────
             const locks = await this.#editLocks(current, userId);
             if (mirror) {
                 const mirrorLocks = await this.#editLocks(mirror, userId);
                 for (const [field, reason] of Object.entries(mirrorLocks)) {
-                    // El espejo no cambia de entidad: su bloqueo de entidad no aplica.
                     if (field === "financial_entity_id") continue;
                     if (!locks[field]) locks[field] = `Movimiento vinculado: ${reason}`;
                 }
@@ -349,7 +292,6 @@ export class GastosService {
                 mode:
                     this.#modo(base.fixed_expense, base.number_of_quotas) !==
                     this.#modo(next.fixed_expense, next.number_of_quotas),
-                // En un gasto fijo la cantidad de cuotas no se usa.
                 number_of_quotas: !ambosFijos && next.number_of_quotas !== base.number_of_quotas,
                 financial_entity_id: String(next.financial_entity_id) !== String(base.financial_entity_id),
                 payed_quotas: next.payed_quotas !== undefined && next.payed_quotas !== paid,
@@ -370,7 +312,6 @@ export class GastosService {
                 });
             }
 
-            // ─── Entidad ────────────────────────────────────────────────────
             let entidadActual = null;
             let entidadNueva = null;
             if (changed.financial_entity_id) {
@@ -380,8 +321,6 @@ export class GastosService {
                 ]);
                 if (!entidadNueva) throw customError(ErrorCode.ENTIDAD_FINANCIERA_NOT_FOUND);
 
-                // Una entidad vinculada a otro usuario tiene copias compartidas de
-                // sus gastos: mover un gasto adentro o afuera rompería ese vínculo.
                 if (entidadNueva.linked_user_id || entidadActual?.linked_user_id) {
                     throw customError(ErrorCode.GASTO_ENTIDAD_NO_EDITABLE, {
                         message: "Un gasto no se puede mover desde o hacia una entidad compartida con otro usuario.",
@@ -394,7 +333,6 @@ export class GastosService {
                 }
             }
 
-            // ─── Historial de cambios ───────────────────────────────────────
             const changes = [];
             if (current.name !== next.name) {
                 changes.push(`Nombre: "${current.name}" → "${next.name}"`);
@@ -427,7 +365,6 @@ export class GastosService {
             }
             const editDetail = changes.length ? changes.join("\n") : null;
 
-            // ─── Grabar ─────────────────────────────────────────────────────
             const [row] = await this.gastosRepository.update(id, next);
             if (!row) throw customError(ErrorCode.GASTO_NOT_FOUND);
 
@@ -458,9 +395,6 @@ export class GastosService {
                 );
             }
 
-            // ─── Movimiento espejo ──────────────────────────────────────────
-            // Recibe los mismos cambios, salvo la entidad (queda en la suya) y
-            // el tipo, que se mantiene opuesto al del original.
             if (mirror) {
                 const oppositeType = next.type === ExpenseType.INGRESO
                     ? ExpenseType.EGRESO
@@ -519,7 +453,6 @@ export class GastosService {
                         `Gasto eliminado: "${current[0].linked_name ?? current[0].name}"`,
                     );
                 } else {
-                    // Rompemos el vínculo para no dejar el espejo apuntando a una fila borrada.
                     await this.gastosRepository.unlink(id);
                 }
             }
@@ -528,7 +461,6 @@ export class GastosService {
         });
     }
 
-    // Restaura un gasto soft-deleted. Verifica que su entidad sea del usuario.
     async restaurar(id, userId) {
         return this.tx(async () => {
             const [gasto] = await this.gastosRepository.getByIdIncludingDeleted(id);
@@ -550,8 +482,6 @@ export class GastosService {
         });
     }
 
-    // Crea una compra + su log de CREATION + un log de PAYMENT por cada cuota
-    // pagada + asocia categorías. Devuelve las rows de la compra creada.
     async #crearCompraConLogs({
         financial_entity_id,
         name,
@@ -622,7 +552,6 @@ export class GastosService {
             const entidad = await this.entidadesFinancierasRepository.getById(financial_entity_id, userId);
             if (!entidad.length) throw customError(ErrorCode.ENTIDAD_FINANCIERA_NOT_FOUND);
 
-            // "Pagar con otra entidad": validamos la entidad de pago antes de crear nada.
             const usaEntidadPago = payment_entity_id && String(payment_entity_id) !== String(financial_entity_id);
             if (usaEntidadPago) {
                 const entidadPago = await this.entidadesFinancierasRepository.getById(payment_entity_id, userId);
@@ -651,7 +580,6 @@ export class GastosService {
                 `Gasto creado: "${name}"`,
             );
 
-            // Si la entidad tiene un usuario vinculado, crear la copia pendiente para ese usuario
             if (entidad[0].linked_user_id) {
                 await triggerCompartidos(entidad[0].linked_user_id, 'compartido.nuevo', { gastoId });
                 const sharedRows = await this.gastosRepository.create({
@@ -670,9 +598,6 @@ export class GastosService {
                 await this.movementsRepository.createGastoLog(sharedRows[0].id, MovementType.CREATION);
             }
 
-            // Movimiento espejo en la entidad de pago: copia casi exacta del original
-            // (mismas cuotas, cuotas pagadas y flag de gasto fijo), con el tipo opuesto.
-            // Siempre es una creación normal (ACTIVE, sin copia compartida).
             if (usaEntidadPago) {
                 const oppositeType = String(type).toUpperCase() === ExpenseType.INGRESO
                     ? ExpenseType.EGRESO
@@ -703,7 +628,6 @@ export class GastosService {
                 );
             }
 
-            // Postergar: el gasto no entra en la sesión de cuentas actual/próxima.
             if (postponed) {
                 await this.gastosRepository.setPostponed(gastoId, true);
                 rows[0].is_postponed = true;
@@ -749,23 +673,8 @@ export class GastosService {
         });
     }
 
-    /**
-     * Pagar / registrar el cobro de una cuota.
-     *
-     *  - Con sesión de "hacer cuentas" abierta: DIFERIDO. Solo marca el gasto en
-     *    la sesión; el pago real se registra al cerrarla (finishSession ->
-     *    effectSettlement) y queda en el historial del gasto y en el de cuentas.
-     *  - Sin sesión abierta (o `direct: true`): DIRECTO. Registra el movimiento
-     *    ahora en el historial del gasto. NO entra en ningún resumen de cuentas.
-     *
-     * En ambos casos el gasto tiene que ser del usuario y tener cuotas sin pagar.
-     *
-     * `direct` lo usan las pantallas donde "hacer cuentas" no aplica (detalle de
-     * entidad): el pago siempre es directo, aunque haya una sesión abierta.
-     */
     async settleQuota(purchase_id, userId, { direct = false } = {}) {
         return this.tx(async () => {
-            // El gasto (con su dueño) y la sesión abierta se piden en paralelo.
             const [rows, session] = await Promise.all([
                 this.#getOwnedWithOwner(purchase_id, userId),
                 direct ? null : this.getOpenSettlementSession(userId),
@@ -773,7 +682,6 @@ export class GastosService {
             this.#assertQuotasRestantes(rows[0]);
 
             if (session) {
-                // En "hacer cuentas" un gasto postergado queda deliberadamente afuera.
                 if (rows[0].is_postponed) {
                     throw customError(ErrorCode.GASTO_POSTERGADO);
                 }
@@ -788,19 +696,6 @@ export class GastosService {
         });
     }
 
-    /**
-     * Pago real de una cuota de varios gastos a la vez, con las mismas reglas
-     * que effectSettlement. Lo usa SettlementService al cerrar la sesión de
-     * cuentas. Todo en pocas consultas, sin importar la cantidad de gastos:
-     *   1. trae los gastos (con su dueño) y sus hermanos compartidos, en paralelo;
-     *   2. descarta los que ya no se pueden pagar: no existen, son ajenos,
-     *      están postergados o tienen todas las cuotas pagas;
-     *   3. registra todos los movimientos en un solo INSERT (todo o nada);
-     *   4. limpia favoritos y avisa a las contrapartes, en paralelo.
-     *
-     * @returns {{ kept: number[], discarded: number[] }} ids que siguen en la
-     *          sesión (pagados, o compartidos ya cubiertos) y los descartados.
-     */
     async effectSettlementBatch(purchaseIds, userId, paymentDate = new Date()) {
         return this.tx(async () => {
             if (userId == null) throw customError(ErrorCode.NO_AUTORIZADO);
@@ -848,8 +743,6 @@ export class GastosService {
                     continue;
                 }
 
-                // Compartido: queda pendiente hasta que la otra persona lo confirme,
-                // salvo que ya tenga cubiertas todas las cuotas (pagas + pendientes).
                 const yaCubierto =
                     !gasto.fixed_expense &&
                     (Number(gasto.payed_quotas) || 0) + (Number(gasto.pending_quotas) || 0) >=
@@ -875,7 +768,6 @@ export class GastosService {
                 ),
             ]);
 
-            // Los ids inválidos (no numéricos) también cuentan como descartados.
             for (const id of purchaseIds) {
                 if (!/^\d+$/.test(String(id))) discarded.push(id);
             }
@@ -883,22 +775,12 @@ export class GastosService {
         });
     }
 
-    /**
-     * Efectúa el pago real de una cuota: registra el movimiento PAYMENT (o
-     * PENDING_PAYMENT si el gasto es compartido) y limpia el favorito si quedó
-     * saldado. Para cerrar una sesión de cuentas se usa effectSettlementBatch.
-     */
     async effectSettlement(gasto, userId, paymentDate = new Date()) {
         const result = await this.#registrarPagoOPendiente(gasto, userId, paymentDate);
         await this.gastosRepository.clearFavoriteIfFinalized(gasto.id);
         return result;
     }
 
-    /**
-     * Registra el pago de una cuota. Si el gasto está compartido con otro usuario
-     * (par original <-> copia, ambos activos), el pago queda como PENDING_PAYMENT
-     * hasta que la otra persona lo confirme; si no, se aplica de una.
-     */
     async #registrarPagoOPendiente(gasto, userId, paymentDate) {
         const [sibling] = await this.gastosRepository.getSharedSibling(gasto.id);
 
@@ -930,9 +812,6 @@ export class GastosService {
         return { pending: false };
     }
 
-    // Revertir el último pago de una cuota. Siempre es directo: borra el
-    // movimiento PAYMENT y registra un REFUND en el historial del gasto.
-    // No interactúa con las sesiones de "hacer cuentas".
     async refundCuota(purchase_id, userId) {
         return this.tx(async () => {
             const rows = await this.#getOwned(purchase_id, userId);
@@ -952,10 +831,6 @@ export class GastosService {
 
         const session = await this.requireSettlementSession(userId);
 
-        // Diferido: solo marcamos cada gasto en la sesión. El pago real se
-        // efectúa al cerrarla (SettlementService.finishSession -> effectSettlement).
-        // Son dos consultas en total: una trae todos los gastos con su dueño y
-        // otra marca los que se pueden marcar.
         const validIds = [...new Set(purchaseIds.map(String))].filter((id) => /^\d+$/.test(id));
         const rows = await this.gastosRepository.getByIdsWithOwner(validIds, userId);
         const byId = new Map(rows.map((r) => [String(r.id), r]));
