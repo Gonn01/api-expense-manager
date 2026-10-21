@@ -4,7 +4,17 @@ import { DATABASE_URL } from "./config/env.js";
 import { logRed, logYellow } from "./utils/logs_custom.js";
 
 const connectionString = DATABASE_URL;
-const connection = postgres(connectionString, { ssl: "require" });
+// El pooler de Supabase corta las conexiones que quedan inactivas, y la
+// primera consulta después de eso fallaba (p. ej. el primer login con Google).
+// Cerramos nosotros las conexiones ociosas antes de que las corte el pooler, y
+// las renovamos cada tanto. `prepare: false` porque el pooler en modo
+// transacción (puerto 6543) no soporta prepared statements con nombre.
+const connection = postgres(connectionString, {
+    ssl: "require",
+    idle_timeout: 20, // segundos sin uso antes de cerrar la conexión
+    max_lifetime: 60 * 30, // renovar cada conexión a los 30 minutos
+    prepare: false,
+});
 
 /**
  * Transacción en curso del flujo async actual: { sql, afterCommit[] }.

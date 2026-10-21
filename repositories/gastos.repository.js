@@ -251,21 +251,26 @@ export class GastosRepository {
     return updated;
   }
 
-  async update(id, name, amount, image_url, fixed_expense, type) {
-    const dbType = type ? String(type).toUpperCase() : null;
+  // Reemplaza los campos editables del gasto. El service ya completó con los
+  // valores actuales los que no venían en el pedido: acá se graban todos.
+  async update(id, { name, amount, image_url, fixed_expense, type, number_of_quotas, currency_type, financial_entity_id }) {
     return await executeQuery(
       `UPDATE purchases
-       SET name = $1, amount = $2, image_url = $3, fixed_expense = $4, type = $5
-       WHERE id = $6
-       RETURNING *,
-           (SELECT COUNT(*) FROM purchases_movements WHERE purchase_id = $6 AND movement_type = 'PAYMENT')::int AS payed_quotas,
-           CASE WHEN number_of_quotas > 0 THEN amount::numeric / number_of_quotas ELSE amount END AS amount_per_quota,
-           (SELECT payment_date FROM purchases_movements WHERE purchase_id = $6 AND movement_type = 'PAYMENT' ORDER BY payment_date ASC NULLS LAST LIMIT 1) AS first_quota_date,
-           (SELECT MAX(payment_date) FROM purchases_movements WHERE purchase_id = $6 AND movement_type = 'PAYMENT') AS last_payment_date,
-           CASE WHEN fixed_expense = false AND (SELECT COUNT(*) FROM purchases_movements WHERE purchase_id = $6 AND movement_type = 'PAYMENT') >= number_of_quotas
-                THEN (SELECT MAX(payment_date) FROM purchases_movements WHERE purchase_id = $6 AND movement_type = 'PAYMENT')
-                ELSE NULL END AS finalization_date`,
-      [name, amount, image_url || null, fixed_expense || false, dbType, id]
+       SET name = $1, amount = $2, image_url = $3, fixed_expense = $4, type = $5,
+           number_of_quotas = $6, currency_type = $7, financial_entity_id = $8
+       WHERE id = $9 AND deleted = false
+       RETURNING id`,
+      [
+        name,
+        amount,
+        image_url || null,
+        Boolean(fixed_expense),
+        String(type).toUpperCase(),
+        number_of_quotas,
+        currency_type,
+        financial_entity_id,
+        id,
+      ]
     );
   }
 

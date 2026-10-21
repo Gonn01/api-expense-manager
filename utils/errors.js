@@ -35,6 +35,9 @@ const CATALOG = Object.freeze({
     GASTO_YA_SALDADO: { status: HttpStatus.CONFLICT, message: "El gasto ya tiene todas sus cuotas pagas" },
     SIN_CUOTAS_PARA_REVERTIR: { status: HttpStatus.BAD_REQUEST, message: "No hay cuotas pagadas para revertir" },
     LISTA_IDS_INVALIDA: { status: HttpStatus.BAD_REQUEST, message: "La lista de IDs de compra es inválida." },
+    GASTO_ENTIDAD_NO_EDITABLE: { status: HttpStatus.CONFLICT, message: "Este gasto no se puede mover a esa entidad." },
+    // El `message` real lo arma el service con el motivo; `details.field` dice qué campo.
+    GASTO_CAMPO_NO_EDITABLE: { status: HttpStatus.CONFLICT, message: "Ese dato del gasto no se puede cambiar." },
 
     // ─── Entidades financieras ───────────────────────────────────────────────
     ENTIDAD_NOT_FOUND: { status: HttpStatus.NOT_FOUND, message: "Entidad no encontrada" },

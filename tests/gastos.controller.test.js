@@ -145,7 +145,7 @@ describe("GastosController", () => {
 
             await controller.update(req, res);
 
-            expect(service.update).toHaveBeenCalledWith("10", 1, "Netflix Premium", 20000, null, false, 0, [1], 0, true);
+            expect(service.update).toHaveBeenCalledWith("10", 1, expect.objectContaining({ name: "Netflix Premium", amount: 20000, image_url: null, fixed_expense: false, type: 0, category_ids: [1], payed_quotas: 0, apply_to_linked: true }));
             expect(res.json).toHaveBeenCalledWith({ message: "Gasto actualizado", data: mockUpdated });
         });
 

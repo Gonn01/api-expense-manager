@@ -1,4 +1,4 @@
-import { MovementType, ExpenseStatus, ExpenseType } from "../utils/enums.js";
+import { MovementType, ExpenseStatus, ExpenseType, Currency } from "../utils/enums.js";
 import { triggerCompartidos } from "../utils/pusher.js";
 import { customError, ErrorCode } from "../utils/errors.js";
 import { logRed } from "../utils/logs_custom.js";
@@ -120,100 +120,375 @@ export class GastosService {
     async getById(id, userId) {
         const row = await this.#getOwned(id, userId, { allowReceiver: true });
 
-        const [movements, categories] = await Promise.all([
+        // La copia compartida todavía sin entidad no se puede editar: sin bloqueos.
+        const [movements, categories, editLocks] = await Promise.all([
             this.movementsRepository.getMovementsByGasto(id),
             this.categoriasRepository.getCategoriasByGasto(id),
+            row[0].financial_entity_id ? this.#editLocks(row[0], userId) : null,
         ]);
 
         row[0].movements = movements;
         row[0].categories = categories;
+        // Campos que los clientes tienen que mostrar deshabilitados: { campo: motivo }.
+        row[0].edit_locks = editLocks;
         return row[0];
     }
 
-    async update(id, userId, name, amount, image_url, fixed_expense, type, category_ids, payed_quotas, apply_to_linked = false) {
+    // Etiqueta del modo de pago de un gasto, para el historial de cambios.
+    #modoLabel(fixed, quotas) {
+        if (fixed) return "Fijo";
+        return Number(quotas) > 1 ? `En cuotas (${quotas})` : "Pago único";
+    }
+
+    /**
+     * Valida el pedido de edición y lo completa con los valores actuales del
+     * gasto: un campo que no viene (undefined) queda como está. Así un cliente
+     * puede mandar solo lo que cambió sin pisar el resto con NULL.
+     */
+    #normalizarUpdate(input, current) {
+        const invalid = (field, message) =>
+            customError(ErrorCode.VALIDATION_ERROR, { message, details: { field } });
+        const has = (k) => input[k] !== undefined;
+
+        let name = current.name;
+        if (has("name")) {
+            if (typeof input.name !== "string" || !input.name.trim()) {
+                throw invalid("name", "El nombre del gasto es obligatorio.");
+            }
+            name = input.name.trim();
+        }
+
+        let amount = Number(current.amount);
+        if (has("amount")) {
+            amount = Number(input.amount);
+            if (!Number.isFinite(amount) || amount <= 0) {
+                throw invalid("amount", "El monto debe ser mayor a 0.");
+            }
+        }
+
+        let type = current.type;
+        if (has("type")) {
+            type = String(input.type).toUpperCase();
+            if (!Object.values(ExpenseType).includes(type)) {
+                throw invalid("type", "El tipo del gasto es inválido.");
+            }
+        }
+
+        let currency_type = current.currency_type;
+        if (has("currency_type")) {
+            currency_type = String(input.currency_type).toUpperCase();
+            if (!Object.values(Currency).includes(currency_type)) {
+                throw invalid("currency_type", "La moneda es inválida.");
+            }
+        }
+
+        const fixed_expense = has("fixed_expense")
+            ? Boolean(input.fixed_expense)
+            : Boolean(current.fixed_expense);
+
+        let number_of_quotas = Number(current.number_of_quotas) || 0;
+        if (has("number_of_quotas")) {
+            number_of_quotas = Number(input.number_of_quotas);
+            if (!Number.isInteger(number_of_quotas) || number_of_quotas < 0) {
+                throw invalid("number_of_quotas", "La cantidad de cuotas debe ser un entero positivo.");
+            }
+        }
+        // Un gasto no fijo tiene al menos una cuota: 0 es un "pago único".
+        if (!fixed_expense && number_of_quotas < 1) number_of_quotas = 1;
+
+        let payed_quotas;
+        if (has("payed_quotas") && input.payed_quotas !== null) {
+            payed_quotas = Number(input.payed_quotas);
+            if (!Number.isInteger(payed_quotas) || payed_quotas < 0) {
+                throw invalid("payed_quotas", "Las cuotas pagadas deben ser un entero positivo.");
+            }
+        }
+
+        let financial_entity_id = current.financial_entity_id;
+        if (has("financial_entity_id") && input.financial_entity_id !== null) {
+            if (!/^\d+$/.test(String(input.financial_entity_id))) {
+                throw invalid("financial_entity_id", "La entidad es inválida.");
+            }
+            financial_entity_id = Number(input.financial_entity_id);
+        }
+
+        let category_ids;
+        if (has("category_ids") && input.category_ids !== null) {
+            if (!Array.isArray(input.category_ids)) {
+                throw invalid("category_ids", "Las categorías son inválidas.");
+            }
+            category_ids = input.category_ids;
+        }
+
+        const image_url = has("image_url") ? input.image_url || null : current.image_url ?? null;
+
+        return {
+            name,
+            amount,
+            type,
+            currency_type,
+            fixed_expense,
+            number_of_quotas,
+            payed_quotas,
+            financial_entity_id,
+            category_ids,
+            image_url,
+        };
+    }
+
+    // Pago directo: si el gasto estaba postergado se levanta la postergación y
+    // queda registrado en el historial del gasto, justo antes del pago.
+    async #levantarPostergacionParaPagar(gasto) {
+        if (!gasto.is_postponed) return;
+        await this.gastosRepository.setPostponed(gasto.id, false);
+        await this.movementsRepository.createGastoLog(gasto.id, MovementType.UNPOSTPONED);
+        await this.#logEntidad(
+            gasto.financial_entity_id,
+            MovementType.UNPOSTPONED,
+            `Postergación quitada al registrar el pago: "${gasto.name}"`,
+        );
+    }
+
+    // Modo de un gasto: fijo, en cuotas o pago único.
+    #modo(fixed, quotas) {
+        if (fixed) return "fixed";
+        return Number(quotas) > 1 ? "installment" : "single";
+    }
+
+    /**
+     * Campos del gasto que no se pueden editar, con el motivo:
+     * `{ campo: "motivo para mostrar" }`. Los campos son los del pedido de
+     * edición, más `mode` (fijo / en cuotas / pago único).
+     *
+     * Reglas (gana el primer motivo que aplica):
+     *  - Pagos: siempre. Se registran con pagar y se deshacen con revertir.
+     *  - Finalizado (todas las cuotas pagas): solo nombre y categorías.
+     *  - Compartido con otro usuario: solo nombre y categorías (la edición
+     *    no llega a la copia de la otra persona).
+     *  - Marcado en la sesión de cuentas abierta: monto, moneda y tipo.
+     *  - Con pagos (confirmados o pendientes): moneda, tipo y modo.
+     *
+     * Nombre, categorías e imagen nunca se bloquean.
+     */
+    async #editLocks(gasto, userId) {
+        const paid = Number(gasto.payed_quotas) || 0;
+        const pending = Number(gasto.pending_quotas) || 0;
+        const quotas = Math.max(Number(gasto.number_of_quotas) || 0, 1);
+        const finalized = !gasto.fixed_expense && paid >= quotas;
+
+        const [siblings, session] = await Promise.all([
+            this.gastosRepository.getSharedSibling(gasto.id),
+            this.getOpenSettlementSession(userId),
+        ]);
+        const shared =
+            Boolean(siblings?.length) ||
+            Boolean(gasto.shared_from_id) ||
+            gasto.status === ExpenseStatus.PENDING_APPROVAL;
+        const marked = session
+            ? await this.settlementRepository.hasItem(session.id, gasto.id)
+            : false;
+
+        const locks = {};
+        const lock = (fields, reason) => {
+            for (const f of fields) if (!locks[f]) locks[f] = reason;
+        };
+        const estructura = ["amount", "currency_type", "type", "mode", "number_of_quotas", "financial_entity_id"];
+
+        lock(["payed_quotas"], "Los pagos se registran con Pagar y se deshacen con Revertir.");
+        if (finalized) {
+            lock(estructura, "El gasto está finalizado: solo se pueden cambiar el nombre y las categorías.");
+        }
+        if (shared) {
+            lock(estructura, "El gasto está compartido con otro usuario: el cambio no llegaría a su copia.");
+        }
+        if (marked) {
+            lock(
+                ["amount", "currency_type", "type"],
+                "El gasto está marcado en la sesión de cuentas abierta. Desmarcalo o terminá la sesión para cambiarlo.",
+            );
+        }
+        if (paid + pending > 0) {
+            lock(["currency_type", "type", "mode"], "El gasto ya tiene pagos registrados.");
+        }
+        return locks;
+    }
+
+    /**
+     * Edita un gasto. `input` trae los campos del pedido: los que no vienen
+     * quedan como están. Un campo bloqueado (ver #editLocks) solo se acepta
+     * si llega con el mismo valor que ya tiene. Con `apply_to_linked`, los
+     * mismos cambios van al movimiento espejo, y valen también sus bloqueos.
+     */
+    async update(id, userId, input = {}) {
         return this.tx(async () => {
-            const current = await this.#getOwned(id, userId);
+            const [current] = await this.#getOwned(id, userId);
+            const base = this.#normalizarUpdate({}, current);
+            const next = this.#normalizarUpdate(input, current);
+            const linkedId = current.linked_purchase_id;
+            const applyToLinked = Boolean(input.apply_to_linked) && Boolean(linkedId);
+            const [mirror] = applyToLinked ? await this.gastosRepository.getById(linkedId) : [];
 
-            const normalizedType = type != null ? String(type).toUpperCase() : current[0].type;
-
-            const changes = [];
-
-            if (current[0].name !== name) {
-                changes.push(`Nombre: "${current[0].name}" → "${name}"`);
-            }
-            if (Number(current[0].amount) !== Number(amount)) {
-                changes.push(`Monto: $${current[0].amount} → $${amount}`);
-            }
-            if (current[0].type !== normalizedType) {
-                changes.push(`Tipo: ${current[0].type === 'INGRESO' ? 'Ingreso' : 'Egreso'} → ${normalizedType === 'INGRESO' ? 'Ingreso' : 'Egreso'}`);
-            }
-            if (Boolean(current[0].fixed_expense) !== Boolean(fixed_expense)) {
-                changes.push(`Frecuencia: ${current[0].fixed_expense ? 'Fijo' : 'En cuotas'} → ${fixed_expense ? 'Fijo' : 'En cuotas'}`);
-            }
-            if (Array.isArray(category_ids)) {
-                const currentCategoryIds = (await this.categoriasRepository.getCategoriasByGasto(id))
-                    .map((c) => String(c.id)).sort();
-                const newCategoryIds = category_ids.map((cid) => String(cid)).sort();
-                if (JSON.stringify(currentCategoryIds) !== JSON.stringify(newCategoryIds)) {
-                    changes.push('Categorías actualizadas');
+            // ─── Bloqueos ───────────────────────────────────────────────────
+            const locks = await this.#editLocks(current, userId);
+            if (mirror) {
+                const mirrorLocks = await this.#editLocks(mirror, userId);
+                for (const [field, reason] of Object.entries(mirrorLocks)) {
+                    // El espejo no cambia de entidad: su bloqueo de entidad no aplica.
+                    if (field === "financial_entity_id") continue;
+                    if (!locks[field]) locks[field] = `Movimiento vinculado: ${reason}`;
                 }
             }
 
-            const editDetail = changes.length ? changes.join('\n') : null;
-
-            const [row] = await this.gastosRepository.update(id, name, amount, image_url, fixed_expense, type);
-
-            if (row.length === 0) {
-                throw customError(ErrorCode.GASTO_NOT_FOUND);
+            const paid = Number(current.payed_quotas) || 0;
+            const pending = Number(current.pending_quotas) || 0;
+            const ambosFijos = base.fixed_expense && next.fixed_expense;
+            const changed = {
+                amount: next.amount !== base.amount,
+                currency_type: next.currency_type !== base.currency_type,
+                type: next.type !== base.type,
+                mode:
+                    this.#modo(base.fixed_expense, base.number_of_quotas) !==
+                    this.#modo(next.fixed_expense, next.number_of_quotas),
+                // En un gasto fijo la cantidad de cuotas no se usa.
+                number_of_quotas: !ambosFijos && next.number_of_quotas !== base.number_of_quotas,
+                financial_entity_id: String(next.financial_entity_id) !== String(base.financial_entity_id),
+                payed_quotas: next.payed_quotas !== undefined && next.payed_quotas !== paid,
+            };
+            for (const [field, didChange] of Object.entries(changed)) {
+                if (didChange && locks[field]) {
+                    throw customError(ErrorCode.GASTO_CAMPO_NO_EDITABLE, {
+                        message: locks[field],
+                        details: { field },
+                    });
+                }
             }
+
+            if (!next.fixed_expense && next.number_of_quotas < paid + pending) {
+                throw customError(ErrorCode.VALIDATION_ERROR, {
+                    message: "La cantidad de cuotas no puede ser menor que las cuotas ya pagadas o pendientes.",
+                    details: { field: "number_of_quotas" },
+                });
+            }
+
+            // ─── Entidad ────────────────────────────────────────────────────
+            let entidadActual = null;
+            let entidadNueva = null;
+            if (changed.financial_entity_id) {
+                [[entidadNueva], [entidadActual]] = await Promise.all([
+                    this.entidadesFinancierasRepository.getById(next.financial_entity_id, userId),
+                    this.entidadesFinancierasRepository.getById(current.financial_entity_id, userId),
+                ]);
+                if (!entidadNueva) throw customError(ErrorCode.ENTIDAD_FINANCIERA_NOT_FOUND);
+
+                // Una entidad vinculada a otro usuario tiene copias compartidas de
+                // sus gastos: mover un gasto adentro o afuera rompería ese vínculo.
+                if (entidadNueva.linked_user_id || entidadActual?.linked_user_id) {
+                    throw customError(ErrorCode.GASTO_ENTIDAD_NO_EDITABLE, {
+                        message: "Un gasto no se puede mover desde o hacia una entidad compartida con otro usuario.",
+                    });
+                }
+                if (linkedId && String(next.financial_entity_id) === String(current.linked_financial_entity_id)) {
+                    throw customError(ErrorCode.GASTO_ENTIDAD_NO_EDITABLE, {
+                        message: "El gasto no se puede mover a la entidad de su movimiento vinculado.",
+                    });
+                }
+            }
+
+            // ─── Historial de cambios ───────────────────────────────────────
+            const changes = [];
+            if (current.name !== next.name) {
+                changes.push(`Nombre: "${current.name}" → "${next.name}"`);
+            }
+            if (changed.amount) {
+                changes.push(`Monto: $${current.amount} → $${next.amount}`);
+            }
+            if (changed.currency_type) {
+                changes.push(`Moneda: ${base.currency_type} → ${next.currency_type}`);
+            }
+            if (changed.type) {
+                const label = (t) => (t === ExpenseType.INGRESO ? "Ingreso" : "Egreso");
+                changes.push(`Tipo: ${label(base.type)} → ${label(next.type)}`);
+            }
+            const modoAntes = this.#modoLabel(base.fixed_expense, base.number_of_quotas);
+            const modoDespues = this.#modoLabel(next.fixed_expense, next.number_of_quotas);
+            if (modoAntes !== modoDespues) {
+                changes.push(`Frecuencia: ${modoAntes} → ${modoDespues}`);
+            }
+            if (changed.financial_entity_id) {
+                changes.push(`Entidad: "${entidadActual?.name ?? "-"}" → "${entidadNueva.name}"`);
+            }
+            if (next.category_ids) {
+                const currentCategoryIds = (await this.categoriasRepository.getCategoriasByGasto(id))
+                    .map((c) => String(c.id)).sort();
+                const newCategoryIds = next.category_ids.map((cid) => String(cid)).sort();
+                if (JSON.stringify(currentCategoryIds) !== JSON.stringify(newCategoryIds)) {
+                    changes.push("Categorías actualizadas");
+                }
+            }
+            const editDetail = changes.length ? changes.join("\n") : null;
+
+            // ─── Grabar ─────────────────────────────────────────────────────
+            const [row] = await this.gastosRepository.update(id, next);
+            if (!row) throw customError(ErrorCode.GASTO_NOT_FOUND);
 
             if (changes.length) {
                 await this.movementsRepository.createGastoLog(id, MovementType.EDITED, null, null, null, editDetail);
             }
-
-            if (payed_quotas !== undefined && !fixed_expense) {
-                const currentPaid = current[0].payed_quotas;
-                if (payed_quotas === 1 && currentPaid === 0) {
-                    await this.movementsRepository.createGastoLog(id, MovementType.PAYMENT, row.amount_per_quota ?? amount, new Date());
-                } else if (payed_quotas === 0 && currentPaid > 0) {
-                    await this.movementsRepository.deletePayments(id);
-                }
+            if (next.category_ids) {
+                await this.categoriasRepository.setCategoriasForGasto(id, next.category_ids);
             }
 
-            if (Array.isArray(category_ids)) {
-                await this.categoriasRepository.setCategoriasForGasto(id, category_ids);
-            }
-
-            const oldName = current[0].name;
-            if (name !== undefined && name !== oldName) {
+            if (current.name !== next.name) {
                 await this.#logEntidad(
-                    current[0].financial_entity_id,
+                    next.financial_entity_id,
                     MovementType.EDITED,
-                    `Gasto renombrado: "${oldName}" → "${name}"`,
+                    `Gasto renombrado: "${current.name}" → "${next.name}"`,
+                );
+            }
+            if (changed.financial_entity_id) {
+                await this.#logEntidad(
+                    current.financial_entity_id,
+                    MovementType.EDITED,
+                    `Gasto movido a "${entidadNueva.name}": "${next.name}"`,
+                );
+                await this.#logEntidad(
+                    next.financial_entity_id,
+                    MovementType.EDITED,
+                    `Gasto traído desde "${entidadActual?.name ?? "-"}": "${next.name}"`,
                 );
             }
 
-            // Propagar cambios al movimiento espejo (nombre / monto / imagen / gasto fijo
-            // y categorías). El tipo del espejo se mantiene opuesto al del original.
-            const linkedId = current[0].linked_purchase_id;
-            if (apply_to_linked && linkedId) {
-                const oppositeType = String(type).toUpperCase() === ExpenseType.INGRESO
+            // ─── Movimiento espejo ──────────────────────────────────────────
+            // Recibe los mismos cambios, salvo la entidad (queda en la suya) y
+            // el tipo, que se mantiene opuesto al del original.
+            if (mirror) {
+                const oppositeType = next.type === ExpenseType.INGRESO
                     ? ExpenseType.EGRESO
                     : ExpenseType.INGRESO;
-                await this.gastosRepository.update(linkedId, name, amount, image_url, fixed_expense, oppositeType);
-                if (Array.isArray(category_ids)) {
-                    await this.categoriasRepository.setCategoriasForGasto(linkedId, category_ids);
+                await this.gastosRepository.update(linkedId, {
+                    ...next,
+                    type: oppositeType,
+                    financial_entity_id: mirror.financial_entity_id,
+                });
+                if (changes.length) {
+                    await this.movementsRepository.createGastoLog(
+                        linkedId, MovementType.EDITED, null, null, null, editDetail,
+                    );
                 }
-                if (name !== undefined && name !== oldName) {
+                if (next.category_ids) {
+                    await this.categoriasRepository.setCategoriasForGasto(linkedId, next.category_ids);
+                }
+                if (mirror.name !== next.name) {
                     await this.#logEntidad(
-                        current[0].linked_financial_entity_id,
+                        mirror.financial_entity_id,
                         MovementType.EDITED,
-                        `Gasto renombrado: "${oldName}" → "${name}"`,
+                        `Gasto renombrado: "${mirror.name}" → "${next.name}"`,
                     );
                 }
             }
 
-            return row;
+            const [updated] = await this.gastosRepository.getById(id);
+            return updated;
         });
     }
 
@@ -506,17 +781,7 @@ export class GastosService {
                 return rows;
             }
 
-            // Pago directo: si estaba postergado se levanta la postergación y queda
-            // registrado en el historial del gasto, justo antes del pago.
-            if (rows[0].is_postponed) {
-                await this.gastosRepository.setPostponed(purchase_id, false);
-                await this.movementsRepository.createGastoLog(purchase_id, MovementType.UNPOSTPONED);
-                await this.#logEntidad(
-                    rows[0].financial_entity_id,
-                    MovementType.UNPOSTPONED,
-                    `Postergación quitada al registrar el pago: "${rows[0].name}"`,
-                );
-            }
+            await this.#levantarPostergacionParaPagar(rows[0]);
 
             await this.effectSettlement(rows[0], userId);
             return await this.gastosRepository.getById(purchase_id);

@@ -35,6 +35,17 @@ export class SettlementRepository {
         );
     }
 
+    // ¿El gasto está marcado en la sesión?
+    async hasItem(sessionId, purchaseId) {
+        const rows = await executeQuery(
+            `SELECT 1 FROM settlement_session_items
+             WHERE session_id = $1 AND purchase_id = $2
+             LIMIT 1`,
+            [sessionId, purchaseId],
+        );
+        return rows.length > 0;
+    }
+
     async upsertItem(sessionId, purchaseId) {
         return await this.upsertItems(sessionId, [purchaseId]);
     }

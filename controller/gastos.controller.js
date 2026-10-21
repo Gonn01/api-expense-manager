@@ -72,10 +72,17 @@ export class GastosController {
     update = async (req, res) => {
         try {
             const { id } = req.params;
-            const { name, amount, image_url, fixed_expense, type, category_ids, payed_quotas, apply_to_linked } = req.body;
+            const {
+                name, amount, image_url, fixed_expense, type, category_ids, payed_quotas,
+                number_of_quotas, currency_type, financial_entity_id, apply_to_linked,
+            } = req.body ?? {};
             const { userId } = req.session;
 
-            const response = await this.gastosService.update(id, userId, name, amount, image_url, fixed_expense, type, category_ids, payed_quotas, apply_to_linked);
+            // Los campos que no vienen quedan como están (los valida el service).
+            const response = await this.gastosService.update(id, userId, {
+                name, amount, image_url, fixed_expense, type, category_ids, payed_quotas,
+                number_of_quotas, currency_type, financial_entity_id, apply_to_linked,
+            });
 
             res.json({
                 message: "Gasto actualizado",

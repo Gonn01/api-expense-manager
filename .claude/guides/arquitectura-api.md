@@ -60,8 +60,13 @@ Reglas:
 - Sin ORM y sin herramienta de migraciones: el esquema de Postgres se administra fuera del repo. `migrate.js` **no** migra el esquema; es un script puntual que importa datos de una app anterior.
 - Baja lógica: entidades, gastos y categorías llevan `deleted`. Toda consulta de lectura filtra `deleted = false`, salvo el listado `GET /entidades-financieras`, que devuelve activas y eliminadas juntas con el campo `deleted` para que cada cliente las separe.
 - Las cuotas pagas no se guardan: se cuentan los movimientos `PAYMENT` de `purchases_movements`.
+- Edición de gastos (`PUT /gastos/:id`): el controller pasa los campos como un objeto y `GastosService.update` los valida y completa con los valores actuales los que no vienen (`undefined` = no tocar). Los campos bloqueados salen de `#editLocks(gasto, userId)` (`{ campo: motivo }`; reglas en RF-GAS-15): un cambio en uno de ellos es 409 `GASTO_CAMPO_NO_EDITABLE` con `details.field`, y el mismo valor se acepta. `getById` devuelve esos bloqueos en `edit_locks` para que los clientes deshabiliten los campos: una regla de edición nueva va en `#editLocks`, no en los clientes. Los pagos nunca se editan acá (`payed_quotas` está siempre bloqueado). Mover de entidad tiene su propio error, `GASTO_ENTIDAD_NO_EDITABLE`.
 - Historial: toda operación relevante registra un movimiento (`movementsRepository.createGastoLog` / `createEntidadLog`) con un tipo de `MovementType` (`utils/enums.js`). El historial de entidades es *best-effort*: si falla, se registra en el log y la operación continúa (corre en un savepoint, ver abajo).
 - Enums de dominio (`Currency`, `ExpenseType`, `ExpenseStatus`, `MovementType`) en `utils/enums.js`.
+
+### Conexión a la base
+
+`db.js` crea un único cliente postgres.js contra el pooler de Supabase (modo transacción, puerto 6543) con `idle_timeout: 20`, `max_lifetime: 1800` y `prepare: false`. El pooler corta las conexiones inactivas: sin `idle_timeout`, la primera consulta después de un rato sin uso fallaba. No quites estas opciones.
 
 ### Transacciones
 
