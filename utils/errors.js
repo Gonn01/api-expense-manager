@@ -17,6 +17,7 @@ const CATALOG = Object.freeze({
 
     GASTO_NOT_FOUND: { status: HttpStatus.NOT_FOUND, message: "Gasto no encontrado" },
     GASTO_POSTERGADO: { status: HttpStatus.CONFLICT, message: "El gasto está postergado para la próxima sesión de cuentas." },
+    GASTO_PAGADO_NO_POSTERGABLE: { status: HttpStatus.CONFLICT, message: "Un gasto con todas sus cuotas pagas no se puede postergar." },
     GASTO_NO_PENDIENTE_APROBACION: { status: HttpStatus.BAD_REQUEST, message: "El gasto no está pendiente de aprobación" },
     GASTO_COMPARTIDO_NO_ASOCIADO: { status: HttpStatus.BAD_REQUEST, message: "No hay gasto compartido asociado" },
     GASTO_COMPARTIDO_NO_RECHAZADO: { status: HttpStatus.BAD_REQUEST, message: "El gasto compartido no está rechazado" },

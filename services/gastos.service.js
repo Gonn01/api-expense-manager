@@ -89,8 +89,12 @@ export class GastosService {
         if (wanted.some((id) => !owned.has(id))) throw customError(ErrorCode.NO_AUTORIZADO);
     }
 
+    #isFullyPaid({ fixed_expense, payed_quotas, number_of_quotas }) {
+        return !fixed_expense && Number(payed_quotas ?? 0) >= Number(number_of_quotas ?? 1);
+    }
+
     #assertQuotasRestantes(gasto) {
-        if (!gasto.fixed_expense && Number(gasto.payed_quotas) >= Number(gasto.number_of_quotas)) {
+        if (this.#isFullyPaid(gasto)) {
             throw customError(ErrorCode.GASTO_YA_SALDADO);
         }
     }
@@ -548,6 +552,10 @@ export class GastosService {
         payment_entity_id = null,
         postponed = false
     ) {
+        if (postponed && this.#isFullyPaid({ fixed_expense, payed_quotas, number_of_quotas })) {
+            throw customError(ErrorCode.GASTO_PAGADO_NO_POSTERGABLE);
+        }
+
         return this.tx(async () => {
             const entidad = await this.entidadesFinancierasRepository.getById(financial_entity_id, userId);
             if (!entidad.length) throw customError(ErrorCode.ENTIDAD_FINANCIERA_NOT_FOUND);
@@ -638,28 +646,37 @@ export class GastosService {
     }
 
     async postergarGasto(id, userId, postponed) {
-        return this.tx(async () => {
-            const current = await this.#getOwned(id, userId);
+        const value = Boolean(postponed);
+        let entidadLog = null;
 
-            const value = Boolean(postponed);
-            const [updated] = await this.gastosRepository.setPostponed(id, value);
+        const updated = await this.tx(async () => {
+            const [current] = await this.#getOwnedWithOwner(id, userId);
 
-            if (value !== current[0].is_postponed) {
-                const type = value ? MovementType.POSTPONED : MovementType.UNPOSTPONED;
-                await this.movementsRepository.createGastoLog(id, type);
-                await this.#logEntidad(
-                    current[0].financial_entity_id,
-                    type,
-                    `${value ? "Postergación agregada" : "Postergación quitada"}: "${current[0].name}"`,
-                );
+            if (value && this.#isFullyPaid(current)) {
+                throw customError(ErrorCode.GASTO_PAGADO_NO_POSTERGABLE);
             }
+            if (value === current.is_postponed) return current;
 
-            return updated;
+            const type = value ? MovementType.POSTPONED : MovementType.UNPOSTPONED;
+            const [[row]] = await Promise.all([
+                this.gastosRepository.setPostponed(id, value),
+                this.movementsRepository.createGastoLog(id, type),
+            ]);
+
+            entidadLog = [
+                current.financial_entity_id,
+                type,
+                `${value ? "Postergación agregada" : "Postergación quitada"}: "${current.name}"`,
+            ];
+            return row;
         });
+
+        if (entidadLog) await this.#logEntidad(...entidadLog);
+        return updated;
     }
 
     async marcarFavorito(id, userId, favorite) {
-        await this.#getOwned(id, userId);
+        await this.#getOwnedWithOwner(id, userId);
 
         const [updated] = await this.gastosRepository.setFavorite(id, Boolean(favorite));
         return updated;
@@ -716,10 +733,7 @@ export class GastosService {
 
             for (const id of ids) {
                 const gasto = byId.get(id);
-                const fullyPaid =
-                    gasto &&
-                    !gasto.fixed_expense &&
-                    Number(gasto.payed_quotas) >= Number(gasto.number_of_quotas);
+                const fullyPaid = gasto && this.#isFullyPaid(gasto);
 
                 if (!gasto || !gasto.owned || gasto.is_postponed || fullyPaid) {
                     discarded.push(Number(id));

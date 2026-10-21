@@ -70,6 +70,8 @@ There is no DI container/framework — factories instantiate everything by hand.
 
 **Ownership**: every public `GastosService` method takes `userId` and starts with `#getOwned(id, userId)`, which checks the expense's entity belongs to that user. New operations on a user-owned resource must do the same.
 
+**User columns**: any query that returns `users` rows selects/returns `USER_PUBLIC_COLUMNS` (`repositories/user-columns.js`), never `SELECT *`. The password hash never leaves the API: only `AuthRepository.findUserWithPasswordByEmail` reads it, and `AuthService.login` strips it before responding.
+
 **Error handling**: `utils/errors.js` defines `CustomError`, an `ErrorCode` catalog (single source of truth: code → HTTP status + default Spanish message), and `customError(code, overrides)`. Services throw these instead of `throw new Error(...)`; a single `errorMiddleware` registered last in `index.js` translates them into JSON responses. Add new domain errors to the `CATALOG` rather than hand-rolling ad hoc errors.
 
 **Config**: `config/env.js` loads `.env` via `dotenv` and exports `JWT_SECRET`/`DATABASE_URL` as named constants — other modules import these constants rather than reading `process.env` directly.

@@ -1,4 +1,5 @@
 import { executeQuery } from '../db.js';
+import { USER_PUBLIC_COLUMNS } from './user-columns.js';
 
 export class UserRepository {
     async updatePreferredCurrency(userId, preferredCurrency) {
@@ -6,7 +7,7 @@ export class UserRepository {
             `UPDATE users
              SET preferred_currency = $2
              WHERE id = $1
-             RETURNING id, name, email, avatar, firebase_user_id, preferred_currency, sueldo, sueldo_currency`,
+             RETURNING ${USER_PUBLIC_COLUMNS}`,
             [userId, preferredCurrency]
         );
     }
@@ -17,7 +18,7 @@ export class UserRepository {
              SET sueldo = $2,
                  sueldo_currency = COALESCE($3, sueldo_currency)
              WHERE id = $1
-             RETURNING id, name, email, avatar, firebase_user_id, preferred_currency, sueldo, sueldo_currency`,
+             RETURNING ${USER_PUBLIC_COLUMNS}`,
             [userId, sueldo, sueldoCurrency ?? null]
         );
     }

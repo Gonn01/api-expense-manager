@@ -20,6 +20,7 @@ repositories/<recurso>.repository.js    SQL crudo con executeQuery (db.js)
 - **Controller**: sin lógica de negocio. Toma `userId` de `req.session`, valida la forma del input (`badRequest`) y delega. Todo `catch` termina en `handleError(res, err)`.
 - **Service**: único lugar con reglas de negocio. No conoce `req` ni `res`.
 - **Repository**: único lugar con SQL. Siempre con parámetros posicionales (`$1, $2…`); nunca concatenar valores.
+- **Usuarios**: toda consulta que devuelve filas de `users` (SELECT o `RETURNING`) usa `USER_PUBLIC_COLUMNS` de `repositories/user-columns.js`, nunca `SELECT *`, así todas las respuestas traen los mismos campos (incluido `avatar`). El hash de la contraseña no sale de la API: solo lo lee `AuthRepository.findUserWithPasswordByEmail`, y `AuthService.login` lo quita antes de responder.
 - Al agregar un recurso, replicar esta estructura en lugar de apartarse de ella.
 
 ## 2. Rutas y autenticación
@@ -80,6 +81,7 @@ Reglas:
 
 - **Toda operación de service con más de una escritura va en una transacción**: `return this.tx(async () => { … })`. Los services reciben `runInTransaction` por constructor (por defecto, `withTransaction`); los tests unitarios pasan `(fn) => fn()`. Una operación de una sola escritura no la necesita.
 - Dentro de una transacción las consultas van por una sola conexión. Se pueden lanzar en paralelo con `Promise.all`, salvo `bestEffort`, que se espera sola: lo que corra en paralelo quedaría dentro de su savepoint.
+- **Cada consulta es un viaje a la base** (~200 ms desde una máquina local contra Supabase). En las acciones frecuentes conviene ahorrarlos: verificar pertenencia y leer el gasto en una sola consulta (`#getOwnedWithOwner`), mandar en paralelo las escrituras independientes y registrar el historial de la entidad después de la transacción (sin savepoint), como hace `postergarGasto`.
 - Si hay riesgo de que dos pedidos simultáneos procesen lo mismo, la fila se bloquea con `SELECT … FOR UPDATE` dentro de la transacción. Lo hace, por ejemplo, el cierre de la sesión de cuentas (`getOpenSession(userId, { forUpdate: true })`).
 - Un método de repository que hace varias consultas también se envuelve en `withTransaction`, como `setCategoriasForGasto`, que hace DELETE + INSERT.
 

@@ -323,6 +323,69 @@ describe("GastosService", () => {
         });
     });
 
+    describe("postergación de un gasto pagado", () => {
+        const crear = ({ number_of_quotas = 1, payed_quotas = 0, fixed_expense = false, postponed = true }) =>
+            service.crearGasto(7, "Netflix", 300, number_of_quotas, "ARS", fixed_expense, null, "EGRESO", OWNER, payed_quotas, [], null, postponed);
+
+        it("no deja crear un gasto pagado y postergado", async () => {
+            await expect(crear({ payed_quotas: 1 })).rejects.toMatchObject({ code: "GASTO_PAGADO_NO_POSTERGABLE", status: 409 });
+            expect(entidadesFinancierasRepository.getById).not.toHaveBeenCalled();
+        });
+
+        it("no deja crear postergado un gasto en cuotas con todas pagas", async () => {
+            await expect(crear({ number_of_quotas: 6, payed_quotas: 6 })).rejects.toMatchObject({ code: "GASTO_PAGADO_NO_POSTERGABLE" });
+        });
+
+        it("no deja postergar un gasto con todas sus cuotas pagas", async () => {
+            gasto = makeGasto({ number_of_quotas: 3, payed_quotas: 3 });
+
+            await expect(service.postergarGasto(10, OWNER, true)).rejects.toMatchObject({ code: "GASTO_PAGADO_NO_POSTERGABLE", status: 409 });
+            expect(gastosRepository.setPostponed).not.toHaveBeenCalled();
+            expect(movementsRepository.createGastoLog).not.toHaveBeenCalled();
+        });
+
+        it("deja quitar la postergación de un gasto ya pagado", async () => {
+            gasto = makeGasto({ number_of_quotas: 3, payed_quotas: 3, is_postponed: true });
+
+            await expect(service.postergarGasto(10, OWNER, false)).resolves.toBeDefined();
+            expect(gastosRepository.setPostponed).toHaveBeenCalledWith(10, false);
+        });
+
+        it("deja postergar un gasto con cuotas pendientes", async () => {
+            await expect(service.postergarGasto(10, OWNER, true)).resolves.toBeDefined();
+            expect(gastosRepository.setPostponed).toHaveBeenCalledWith(10, true);
+        });
+
+        it("registra la postergación en el historial del gasto y de la entidad", async () => {
+            await service.postergarGasto(10, OWNER, true);
+
+            expect(movementsRepository.createGastoLog).toHaveBeenCalledWith(10, "POSTPONED");
+            expect(movementsRepository.createEntidadLog).toHaveBeenCalledWith(7, "POSTPONED", 'Postergación agregada: "Netflix"');
+        });
+
+        it("no escribe nada si el gasto ya estaba en ese estado", async () => {
+            gasto = makeGasto({ is_postponed: true });
+
+            await expect(service.postergarGasto(10, OWNER, true)).resolves.toMatchObject({ id: 10 });
+            expect(gastosRepository.setPostponed).not.toHaveBeenCalled();
+            expect(movementsRepository.createGastoLog).not.toHaveBeenCalled();
+            expect(movementsRepository.createEntidadLog).not.toHaveBeenCalled();
+        });
+
+        it("si falla el historial de la entidad, la postergación se mantiene", async () => {
+            movementsRepository.createEntidadLog.mockRejectedValueOnce(new Error("db caída"));
+
+            await expect(service.postergarGasto(10, OWNER, true)).resolves.toBeDefined();
+            expect(gastosRepository.setPostponed).toHaveBeenCalledWith(10, true);
+        });
+
+        it("un gasto fijo se puede postergar aunque tenga pagos", async () => {
+            gasto = makeGasto({ fixed_expense: true, number_of_quotas: 1, payed_quotas: 5 });
+
+            await expect(service.postergarGasto(10, OWNER, true)).resolves.toBeDefined();
+        });
+    });
+
     describe("update", () => {
         const rejectsLocked = async (input, field) => {
             await expect(service.update(10, OWNER, input)).rejects.toMatchObject({

@@ -11,22 +11,22 @@ export class AuthService {
     }
 
     async login(email, password) {
-        const users = await this.authRepository.findUserByEmail(email);
+        const users = await this.authRepository.findUserWithPasswordByEmail(email);
 
-        if (users.length === 0) {
+        if (users.length === 0 || !users[0].password) {
             throw customError(ErrorCode.CREDENCIALES_INVALIDAS);
         }
 
-        const user = users[0];
+        const { password: hash, ...user } = users[0];
 
-        const match = await bcrypt.compare(password, user.password);
+        const match = await bcrypt.compare(password, hash);
 
         if (!match) {
             throw customError(ErrorCode.CREDENCIALES_INVALIDAS);
         }
 
         const token = jwt.sign(
-            { userId: user.id, email: user.email, firebaseId: user.firebase_id },
+            { userId: user.id, email: user.email, firebaseId: user.firebase_user_id },
             JWT_SECRET,
             { expiresIn: "7d" }
         );
