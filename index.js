@@ -5,7 +5,12 @@ import { logBlue, logGray } from "./utils/logs_custom.js";
 import { errorMiddleware } from "./utils/errors.js";
 
 const app = express();
-app.use(cors());
+app.use(cors({
+    origin: [
+        'https://web-plataformas-de-desarrollo.vercel.app',
+        'https://web-plataformas-de-desarrollo-dev.vercel.app',
+    ],
+}));
 app.use(express.json());
 
 const port = process.env.PORT || 3000;
