@@ -630,6 +630,25 @@ describe("GastosService", () => {
             expect(gastosRepository.update).not.toHaveBeenCalled();
         });
 
+        it("devuelve el detalle completo para que los clientes no tengan que volver a pedirlo", async () => {
+            movementsRepository.getMovementsByGasto.mockResolvedValue([{ id: 1, movement_type: "EDITED" }]);
+            categoriasRepository.getCategoriasByGasto.mockResolvedValue([{ id: 1, name: "Casa" }]);
+
+            const detalle = await service.update(10, OWNER, { name: "Otro" });
+
+            expect(detalle.movements).toEqual([{ id: 1, movement_type: "EDITED" }]);
+            expect(detalle.categories).toEqual([{ id: 1, name: "Casa" }]);
+            expect(detalle.edit_locks).toMatchObject({ payed_quotas: expect.any(String) });
+        });
+
+        it("no reescribe las categorías si no cambiaron", async () => {
+            categoriasRepository.getCategoriasByGasto.mockResolvedValue([{ id: 2 }, { id: 1 }]);
+
+            await service.update(10, OWNER, { name: "Otro", category_ids: [1, 2] });
+
+            expect(categoriasRepository.setCategoriasForGasto).not.toHaveBeenCalled();
+        });
+
         it("responde GASTO_NOT_FOUND si el UPDATE no afecta ninguna fila", async () => {
             gastosRepository.update.mockResolvedValue([]);
 

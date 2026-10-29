@@ -225,23 +225,26 @@ export class GastosService {
         return Number(quotas) > 1 ? "installment" : "single";
     }
 
-    async #editLocks(gasto, userId) {
-        const paid = Number(gasto.payed_quotas) || 0;
-        const pending = Number(gasto.pending_quotas) || 0;
-        const quotas = Math.max(Number(gasto.number_of_quotas) || 0, 1);
-        const finalized = !gasto.fixed_expense && paid >= quotas;
-
+    async #editLockContext(gasto, userId) {
         const [siblings, session] = await Promise.all([
             this.gastosRepository.getSharedSibling(gasto.id),
             this.getOpenSettlementSession(userId),
         ]);
-        const shared =
-            Boolean(siblings?.length) ||
-            Boolean(gasto.shared_from_id) ||
-            gasto.status === ExpenseStatus.PENDING_APPROVAL;
         const marked = session
             ? await this.settlementRepository.hasItem(session.id, gasto.id)
             : false;
+        return { hasSibling: Boolean(siblings?.length), marked };
+    }
+
+    #computeEditLocks(gasto, { hasSibling, marked }) {
+        const paid = Number(gasto.payed_quotas) || 0;
+        const pending = Number(gasto.pending_quotas) || 0;
+        const quotas = Math.max(Number(gasto.number_of_quotas) || 0, 1);
+        const finalized = !gasto.fixed_expense && paid >= quotas;
+        const shared =
+            hasSibling ||
+            Boolean(gasto.shared_from_id) ||
+            gasto.status === ExpenseStatus.PENDING_APPROVAL;
 
         const locks = {};
         const lock = (fields, reason) => {
@@ -268,16 +271,26 @@ export class GastosService {
         return locks;
     }
 
+    async #editLocks(gasto, userId) {
+        return this.#computeEditLocks(gasto, await this.#editLockContext(gasto, userId));
+    }
+
     async update(id, userId, input = {}) {
         return this.tx(async () => {
-            const [current] = await this.#getOwned(id, userId);
+            const [current] = await this.#getOwnedWithOwner(id, userId);
             const base = this.#normalizarUpdate({}, current);
             const next = this.#normalizarUpdate(input, current);
             const linkedId = current.linked_purchase_id;
             const applyToLinked = Boolean(input.apply_to_linked) && Boolean(linkedId);
-            const [mirror] = applyToLinked ? await this.gastosRepository.getById(linkedId) : [];
 
-            const locks = await this.#editLocks(current, userId);
+            const [lockContext, mirrorRows, currentCategories] = await Promise.all([
+                this.#editLockContext(current, userId),
+                applyToLinked ? this.gastosRepository.getById(linkedId) : [],
+                next.category_ids ? this.categoriasRepository.getCategoriasByGasto(id) : [],
+            ]);
+            const [mirror] = mirrorRows;
+
+            const locks = this.#computeEditLocks(current, lockContext);
             if (mirror) {
                 const mirrorLocks = await this.#editLocks(mirror, userId);
                 for (const [field, reason] of Object.entries(mirrorLocks)) {
@@ -359,25 +372,26 @@ export class GastosService {
             if (changed.financial_entity_id) {
                 changes.push(`Entidad: "${entidadActual?.name ?? "-"}" → "${entidadNueva.name}"`);
             }
-            if (next.category_ids) {
-                const currentCategoryIds = (await this.categoriasRepository.getCategoriasByGasto(id))
-                    .map((c) => String(c.id)).sort();
-                const newCategoryIds = next.category_ids.map((cid) => String(cid)).sort();
-                if (JSON.stringify(currentCategoryIds) !== JSON.stringify(newCategoryIds)) {
-                    changes.push("Categorías actualizadas");
-                }
+            const categoriesChanged =
+                Boolean(next.category_ids) &&
+                JSON.stringify(currentCategories.map((c) => String(c.id)).sort()) !==
+                    JSON.stringify(next.category_ids.map((cid) => String(cid)).sort());
+            if (categoriesChanged) {
+                changes.push("Categorías actualizadas");
             }
             const editDetail = changes.length ? changes.join("\n") : null;
 
             const [row] = await this.gastosRepository.update(id, next);
             if (!row) throw customError(ErrorCode.GASTO_NOT_FOUND);
 
-            if (changes.length) {
-                await this.movementsRepository.createGastoLog(id, MovementType.EDITED, null, null, null, editDetail);
-            }
-            if (next.category_ids) {
-                await this.categoriasRepository.setCategoriasForGasto(id, next.category_ids);
-            }
+            await Promise.all([
+                changes.length
+                    ? this.movementsRepository.createGastoLog(id, MovementType.EDITED, null, null, null, editDetail)
+                    : null,
+                categoriesChanged
+                    ? this.categoriasRepository.setCategoriasForGasto(id, next.category_ids)
+                    : null,
+            ]);
 
             if (current.name !== next.name) {
                 await this.#logEntidad(
@@ -425,7 +439,14 @@ export class GastosService {
                 }
             }
 
-            const [updated] = await this.gastosRepository.getById(id);
+            const [[updated], movements, categories] = await Promise.all([
+                this.gastosRepository.getById(id),
+                this.movementsRepository.getMovementsByGasto(id),
+                this.categoriasRepository.getCategoriasByGasto(id),
+            ]);
+            updated.movements = movements;
+            updated.categories = categories;
+            updated.edit_locks = this.#computeEditLocks(updated, lockContext);
             return updated;
         });
     }

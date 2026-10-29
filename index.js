@@ -9,6 +9,7 @@ app.use(cors({
     origin: [
         'https://web-plataformas-de-desarrollo.vercel.app',
         'https://web-plataformas-de-desarrollo-dev.vercel.app',
+        'http://localhost:5173',
     ],
 }));
 app.use(express.json());
