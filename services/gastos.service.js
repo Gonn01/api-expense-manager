@@ -499,6 +499,7 @@ export class GastosService {
         payed_quotas = 0,
         category_ids = [],
         linked_purchase_id = null,
+        is_postponed = false,
     }) {
         const rows = await this.gastosRepository.create({
             financial_entity_id,
@@ -511,28 +512,29 @@ export class GastosService {
             type,
             status,
             linked_purchase_id,
+            is_postponed,
         });
 
         const gastoId = rows[0].id;
         const amountPerQuota = number_of_quotas > 0 ? amount / number_of_quotas : amount;
+        const paymentDate = new Date();
 
-        const logPromises = [
-            this.movementsRepository.createGastoLog(gastoId, MovementType.CREATION)
+        const logs = [
+            { gastoId, movementType: MovementType.CREATION },
+            ...Array.from({ length: Number(payed_quotas) || 0 }, () => ({
+                gastoId,
+                movementType: MovementType.PAYMENT,
+                amount: amountPerQuota,
+                paymentDate,
+            })),
         ];
 
-        for (let i = 0; i < payed_quotas; i++) {
-            logPromises.push(
-                this.movementsRepository.createGastoLog(gastoId, MovementType.PAYMENT, amountPerQuota, new Date())
-            );
-        }
+        const [, categories] = await Promise.all([
+            this.movementsRepository.createGastoLogs(logs),
+            this.categoriasRepository.addCategoriasToNewGasto(gastoId, category_ids),
+        ]);
 
-        await Promise.all(logPromises);
-
-        if (category_ids?.length) {
-            await this.categoriasRepository.setCategoriasForGasto(gastoId, category_ids);
-        }
-
-        rows[0].categories = await this.categoriasRepository.getCategoriasByGasto(gastoId);
+        rows[0].categories = categories;
 
         return rows;
     }
@@ -556,15 +558,18 @@ export class GastosService {
             throw customError(ErrorCode.GASTO_PAGADO_NO_POSTERGABLE);
         }
 
-        return this.tx(async () => {
-            const entidad = await this.entidadesFinancierasRepository.getById(financial_entity_id, userId);
-            if (!entidad.length) throw customError(ErrorCode.ENTIDAD_FINANCIERA_NOT_FOUND);
+        const usaEntidadPago = payment_entity_id && String(payment_entity_id) !== String(financial_entity_id);
+        const entidadLogs = [];
 
-            const usaEntidadPago = payment_entity_id && String(payment_entity_id) !== String(financial_entity_id);
-            if (usaEntidadPago) {
-                const entidadPago = await this.entidadesFinancierasRepository.getById(payment_entity_id, userId);
-                if (!entidadPago.length) throw customError(ErrorCode.ENTIDAD_PAGO_NOT_FOUND);
-            }
+        const created = await this.tx(async () => {
+            const [entidad, entidadPago] = await Promise.all([
+                this.entidadesFinancierasRepository.getById(financial_entity_id, userId),
+                usaEntidadPago
+                    ? this.entidadesFinancierasRepository.getById(payment_entity_id, userId)
+                    : null,
+            ]);
+            if (!entidad.length) throw customError(ErrorCode.ENTIDAD_FINANCIERA_NOT_FOUND);
+            if (usaEntidadPago && !entidadPago.length) throw customError(ErrorCode.ENTIDAD_PAGO_NOT_FOUND);
 
             const rows = await this.#crearCompraConLogs({
                 financial_entity_id,
@@ -578,15 +583,16 @@ export class GastosService {
                 status: entidad[0].linked_user_id ? ExpenseStatus.PENDING_APPROVAL : ExpenseStatus.ACTIVE,
                 payed_quotas,
                 category_ids,
+                is_postponed: Boolean(postponed),
             });
 
             const gastoId = rows[0].id;
 
-            await this.#logEntidad(
+            entidadLogs.push([
                 financial_entity_id,
                 MovementType.PURCHASE_CREATED,
                 `Gasto creado: "${name}"`,
-            );
+            ]);
 
             if (entidad[0].linked_user_id) {
                 await triggerCompartidos(entidad[0].linked_user_id, 'compartido.nuevo', { gastoId });
@@ -629,20 +635,18 @@ export class GastosService {
                 await this.gastosRepository.linkPurchases(gastoId, mirror[0].id);
                 rows[0].linked_purchase_id = mirror[0].id;
 
-                await this.#logEntidad(
+                entidadLogs.push([
                     payment_entity_id,
                     MovementType.PURCHASE_CREATED,
                     `Gasto espejo creado: "${name}"`,
-                );
-            }
-
-            if (postponed) {
-                await this.gastosRepository.setPostponed(gastoId, true);
-                rows[0].is_postponed = true;
+                ]);
             }
 
             return rows;
         });
+
+        for (const log of entidadLogs) await this.#logEntidad(...log);
+        return created;
     }
 
     async postergarGasto(id, userId, postponed) {

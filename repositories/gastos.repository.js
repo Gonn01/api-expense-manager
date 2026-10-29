@@ -293,6 +293,7 @@ export class GastosRepository {
     shared_from_id = null,
     receiver_user_id = null,
     linked_purchase_id = null,
+    is_postponed = false,
   }) {
     const dbType = type && Object.values(ExpenseType).includes(String(type).toUpperCase())
       ? String(type).toUpperCase()
@@ -305,9 +306,9 @@ export class GastosRepository {
       `INSERT INTO purchases (
         financial_entity_id, name, amount, number_of_quotas,
         currency_type, fixed_expense, deleted, image_url, created_at, type,
-        status, shared_from_id, receiver_user_id, linked_purchase_id
+        status, shared_from_id, receiver_user_id, linked_purchase_id, is_postponed
       )
-      VALUES ($1,$2,$3,$4,$5,$6,false,$7,now(),$8,$9,$10,$11,$12)
+      VALUES ($1,$2,$3,$4,$5,$6,false,$7,now(),$8,$9,$10,$11,$12,$13)
       RETURNING *,
           0::int AS payed_quotas,
           CASE WHEN $4 > 0 THEN $3::numeric / $4 ELSE $3 END AS amount_per_quota,
@@ -326,6 +327,7 @@ export class GastosRepository {
         shared_from_id,
         receiver_user_id,
         linked_purchase_id,
+        Boolean(is_postponed),
       ]
     );
   }

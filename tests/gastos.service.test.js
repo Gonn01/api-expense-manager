@@ -323,6 +323,63 @@ describe("GastosService", () => {
         });
     });
 
+    describe("crearGasto", () => {
+        const crear = ({ number_of_quotas = 3, payed_quotas = 0, category_ids = [], postponed = false } = {}) =>
+            service.crearGasto(7, "Netflix", 300, number_of_quotas, "ARS", false, null, "EGRESO", OWNER, payed_quotas, category_ids, null, postponed);
+
+        beforeEach(() => {
+            gastosRepository.create = vi.fn(async (data) => [{ id: 10, ...data }]);
+            categoriasRepository.addCategoriasToNewGasto = vi.fn(async (_, ids) => ids.map((id) => ({ id, name: `c${id}` })));
+        });
+
+        it("registra la creación y las cuotas pagas en una sola inserción", async () => {
+            await crear({ payed_quotas: 2 });
+
+            expect(movementsRepository.createGastoLog).not.toHaveBeenCalled();
+            expect(movementsRepository.createGastoLogs).toHaveBeenCalledTimes(1);
+            const [logs] = movementsRepository.createGastoLogs.mock.calls[0];
+            expect(logs.map((l) => l.movementType)).toEqual(["CREATION", "PAYMENT", "PAYMENT"]);
+            expect(logs[1]).toMatchObject({ gastoId: 10, amount: 100 });
+        });
+
+        it("asigna las categorías y las devuelve en el gasto creado", async () => {
+            const [creado] = await crear({ category_ids: [1, 2] });
+
+            expect(categoriasRepository.addCategoriasToNewGasto).toHaveBeenCalledWith(10, [1, 2]);
+            expect(categoriasRepository.setCategoriasForGasto).not.toHaveBeenCalled();
+            expect(creado.categories).toEqual([{ id: 1, name: "c1" }, { id: 2, name: "c2" }]);
+        });
+
+        it("crea el gasto ya postergado sin una actualización aparte", async () => {
+            const [creado] = await crear({ postponed: true });
+
+            expect(gastosRepository.create).toHaveBeenCalledWith(expect.objectContaining({ is_postponed: true }));
+            expect(gastosRepository.setPostponed).not.toHaveBeenCalled();
+            expect(creado.is_postponed).toBe(true);
+        });
+
+        it("registra el historial de la entidad después de la transacción", async () => {
+            const order = [];
+            service.tx = async (fn) => {
+                const result = await fn();
+                order.push("commit");
+                return result;
+            };
+            movementsRepository.createEntidadLog.mockImplementation(async () => order.push("entidad"));
+
+            await crear();
+
+            expect(order).toEqual(["commit", "entidad"]);
+            expect(movementsRepository.createEntidadLog).toHaveBeenCalledWith(7, "PURCHASE_CREATED", 'Gasto creado: "Netflix"');
+        });
+
+        it("si falla el historial de la entidad, el gasto igual se crea", async () => {
+            movementsRepository.createEntidadLog.mockRejectedValueOnce(new Error("db caída"));
+
+            await expect(crear()).resolves.toHaveLength(1);
+        });
+    });
+
     describe("postergación de un gasto pagado", () => {
         const crear = ({ number_of_quotas = 1, payed_quotas = 0, fixed_expense = false, postponed = true }) =>
             service.crearGasto(7, "Netflix", 300, number_of_quotas, "ARS", fixed_expense, null, "EGRESO", OWNER, payed_quotas, [], null, postponed);
