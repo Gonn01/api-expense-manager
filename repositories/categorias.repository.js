@@ -30,6 +30,24 @@ export class CategoriasRepository {
         );
     }
 
+    async addCategoriasToNewGasto(gastoId, categoryIds) {
+        if (!categoryIds?.length) return [];
+
+        const values = categoryIds.map((_, i) => `($1, ${i + 2}, NOW())`).join(", ");
+        return await executeQuery(
+            `WITH inserted AS (
+                INSERT INTO purchases_categories (purchase_id, category_id, created_at)
+                VALUES ${values}
+                RETURNING category_id
+             )
+             SELECT uc.id, uc.name, uc.color
+             FROM user_categories uc
+             JOIN inserted i ON i.category_id = uc.id
+             WHERE uc.deleted = false`,
+            [gastoId, ...categoryIds]
+        );
+    }
+
     async setCategoriasForGasto(gastoId, categoryIds) {
         return withTransaction(async () => {
             await executeQuery(
