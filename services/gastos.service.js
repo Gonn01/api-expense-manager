@@ -4,6 +4,9 @@ import { customError, ErrorCode } from "../utils/errors.js";
 import { logRed } from "../utils/logs_custom.js";
 import { withTransaction, bestEffort } from "../db.js";
 
+export const MAX_INSTALLMENTS = 360;
+const MAX_INSTALLMENTS_MESSAGE = `El máximo es de ${MAX_INSTALLMENTS} cuotas.`;
+
 export class GastosService {
     constructor({
         gastosRepository,
@@ -165,6 +168,9 @@ export class GastosService {
             number_of_quotas = Number(input.number_of_quotas);
             if (!Number.isInteger(number_of_quotas) || number_of_quotas < 0) {
                 throw invalid("number_of_quotas", "La cantidad de cuotas debe ser un entero positivo.");
+            }
+            if (!fixed_expense && number_of_quotas > MAX_INSTALLMENTS) {
+                throw invalid("number_of_quotas", MAX_INSTALLMENTS_MESSAGE);
             }
         }
         if (!fixed_expense && number_of_quotas < 1) number_of_quotas = 1;
@@ -575,6 +581,13 @@ export class GastosService {
         payment_entity_id = null,
         postponed = false
     ) {
+        if (!fixed_expense && Number(number_of_quotas) > MAX_INSTALLMENTS) {
+            throw customError(ErrorCode.VALIDATION_ERROR, {
+                message: MAX_INSTALLMENTS_MESSAGE,
+                details: { field: "number_of_quotas" },
+            });
+        }
+
         if (postponed && this.#isFullyPaid({ fixed_expense, payed_quotas, number_of_quotas })) {
             throw customError(ErrorCode.GASTO_PAGADO_NO_POSTERGABLE);
         }

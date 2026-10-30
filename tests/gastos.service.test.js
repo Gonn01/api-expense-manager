@@ -393,6 +393,26 @@ describe("GastosService", () => {
             await expect(crear({ number_of_quotas: 6, payed_quotas: 6 })).rejects.toMatchObject({ code: "GASTO_PAGADO_NO_POSTERGABLE" });
         });
 
+        it("no deja crear un gasto con más de 360 cuotas", async () => {
+            await expect(crear({ number_of_quotas: 361, postponed: false })).rejects.toMatchObject({
+                code: "VALIDATION_ERROR",
+                status: 400,
+                message: "El máximo es de 360 cuotas.",
+                details: { field: "number_of_quotas" },
+            });
+            expect(entidadesFinancierasRepository.getById).not.toHaveBeenCalled();
+        });
+
+        it("360 cuotas pasa la validación y sigue con la creación", async () => {
+            await crear({ number_of_quotas: 360, postponed: false }).catch(() => {});
+            expect(entidadesFinancierasRepository.getById).toHaveBeenCalledWith(7, OWNER);
+        });
+
+        it("el máximo de cuotas no aplica a un gasto fijo", async () => {
+            await crear({ number_of_quotas: 361, fixed_expense: true, postponed: false }).catch(() => {});
+            expect(entidadesFinancierasRepository.getById).toHaveBeenCalled();
+        });
+
         it("no deja postergar un gasto con todas sus cuotas pagas", async () => {
             gasto = makeGasto({ number_of_quotas: 3, payed_quotas: 3 });
 
@@ -487,6 +507,7 @@ describe("GastosService", () => {
             [{ type: "OTRO" }, "type"],
             [{ currency_type: "XXX" }, "currency_type"],
             [{ number_of_quotas: 1.5 }, "number_of_quotas"],
+            [{ number_of_quotas: 361 }, "number_of_quotas"],
         ])("rechaza %o con VALIDATION_ERROR sin modificar nada", async (input, field) => {
             await expect(service.update(10, OWNER, input)).rejects.toMatchObject({
                 code: "VALIDATION_ERROR",
