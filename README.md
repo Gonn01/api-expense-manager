@@ -1,6 +1,6 @@
 # Plataforma de Gestión de Deudas — API
 
-API REST que funciona como backend único de la **Plataforma de Gestión de Deudas**. La consumen dos clientes con la misma funcionalidad: la web React ([web-plataformas-de-desarrollo](https://github.com/Gonn01/web-plataformas-de-desarrollo)) y la app Flutter ([app_expense_manager](https://github.com/Gonn01/app_expense_manager)).
+API REST de la **Plataforma de Gestión de Deudas**, hecha en Node.js con Express 5 sobre PostgreSQL.
 
 ## Descripción del proyecto
 
@@ -12,8 +12,6 @@ La API persiste los datos en PostgreSQL y hace cumplir todas las reglas de negoc
 - Categorías y dashboard con totales por moneda.
 - Gastos compartidos entre usuarios vinculados: aprobación de gastos y confirmación de pagos, con notificaciones en tiempo real por Pusher.
 - Modo "hacer cuentas": sesiones de cierre que registran los pagos marcados y guardan un snapshot inmutable.
-
-La documentación funcional de todo el sistema (requerimientos, casos de uso, diagramas) está en el repo de la web, en [docs/](https://github.com/Gonn01/web-plataformas-de-desarrollo/tree/master/docs).
 
 ## Requisitos previos
 
@@ -49,7 +47,7 @@ PUSHER_CLUSTER=sa1
 | `DATABASE_URL` | Sí | Cadena de conexión a PostgreSQL. |
 | `JWT_SECRET` | Sí | Secreto con el que se firman y verifican los JWT de sesión. |
 | `PORT` | No | Puerto HTTP. Por defecto `3000`. |
-| `PUSHER_APP_ID`, `PUSHER_KEY`, `PUSHER_SECRET`, `PUSHER_CLUSTER` | No | Credenciales de Pusher Channels para publicar los eventos de gastos compartidos. La key y el cluster deben coincidir con los configurados en la web y en la app. |
+| `PUSHER_APP_ID`, `PUSHER_KEY`, `PUSHER_SECRET`, `PUSHER_CLUSTER` | No | Credenciales de Pusher Channels para publicar los eventos de gastos compartidos. |
 
 ## Base de datos
 
@@ -85,7 +83,7 @@ curl http://localhost:3000/api/health
 
 Devuelve `200` si la base responde y `503` si no.
 
-El CORS permite `http://localhost:5173` (la web en desarrollo) y los dominios de la web en Vercel. La app Flutter no pasa por CORS; desde el emulador de Android la API se alcanza en `http://10.0.2.2:3000/api`.
+Los orígenes permitidos por CORS están definidos en `index.js`; para consumir la API desde un navegador en otro origen hay que agregarlo ahí.
 
 ### Comandos
 
@@ -104,11 +102,10 @@ Los tests son unitarios y no necesitan una base: los de controllers mockean los 
 ## Arquitectura técnica
 
 ```
-Web (React) ─┐
-             ├─HTTP/JSON + JWT──► Express (/api) ──SQL──► PostgreSQL
-App (Flutter)┘                         │
-       ▲                               └──► Pusher Channels (canal compartidos-<userId>)
-       └────────────── eventos en tiempo real ◄──┘
+Cliente ──HTTP/JSON + JWT──► Express (/api) ──SQL──► PostgreSQL
+   ▲                              │
+   │                              └──► Pusher Channels (canal compartidos-<userId>)
+   └──────── eventos en tiempo real ◄──┘
 ```
 
 Cada recurso sigue el mismo patrón en capas, con inyección de dependencias manual:
@@ -126,8 +123,6 @@ repositories/<recurso>.repository.js SQL plano con executeQuery (db.js)
 - **Errores**: catálogo único en `utils/errors.js` (código → status HTTP + mensaje en español). Un middleware final los convierte en respuestas JSON.
 - **Transacciones**: `withTransaction` sobre `AsyncLocalStorage`; las operaciones con más de una escritura corren en una transacción y las notificaciones de Pusher se envían recién después del commit.
 - **Seguridad de datos**: cada operación sobre un recurso verifica que pertenezca al usuario de la sesión, y el hash de la contraseña nunca sale de la API.
-
-Detalle completo en [.claude/guides/arquitectura-api.md](.claude/guides/arquitectura-api.md).
 
 ## Librerías principales
 
@@ -147,5 +142,4 @@ Detalle completo en [.claude/guides/arquitectura-api.md](.claude/guides/arquitec
 ## Autores
 
 - Gonzalo Rigoni
-- Agustin Masa
 - Romina Herrera
