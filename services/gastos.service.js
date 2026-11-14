@@ -561,7 +561,16 @@ export class GastosService {
             this.categoriasRepository.addCategoriasToNewGasto(gastoId, category_ids),
         ]);
 
-        rows[0].categories = categories;
+        const paid = Number(payed_quotas) || 0;
+        const lastPayment = paid > 0 ? paymentDate : null;
+        Object.assign(rows[0], {
+            categories,
+            payed_quotas: paid,
+            pending_quotas: 0,
+            first_quota_date: lastPayment,
+            last_payment_date: lastPayment,
+            finalization_date: !fixed_expense && paid >= Number(number_of_quotas) ? lastPayment : null,
+        });
 
         return rows;
     }
@@ -667,7 +676,19 @@ export class GastosService {
                 });
 
                 await this.gastosRepository.linkPurchases(gastoId, mirror[0].id);
-                rows[0].linked_purchase_id = mirror[0].id;
+                Object.assign(rows[0], {
+                    linked_purchase_id: mirror[0].id,
+                    linked_financial_entity_id: payment_entity_id,
+                    linked_name: name,
+                    linked_type: oppositeType,
+                    mirror: {
+                        ...mirror[0],
+                        linked_purchase_id: gastoId,
+                        linked_financial_entity_id: financial_entity_id,
+                        linked_name: name,
+                        linked_type: type,
+                    },
+                });
 
                 entidadLogs.push([
                     payment_entity_id,

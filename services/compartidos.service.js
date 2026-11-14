@@ -37,6 +37,26 @@ export class CompartidosService {
         if (!sibling || String(sibling.counterparty_user_id) !== String(userId)) {
             throw customError(ErrorCode.NO_AUTORIZADO);
         }
+        return sibling;
+    }
+
+    async #registrarPagoEnCopia(siblingId, pend) {
+        const [copia] = await this.gastosRepository.getById(siblingId);
+        if (!copia) return;
+
+        const yaSaldada =
+            !copia.fixed_expense && (Number(copia.payed_quotas) || 0) >= Number(copia.number_of_quotas);
+        if (yaSaldada) return;
+
+        await this.movementsRepository.createGastoLog(
+            siblingId,
+            MovementType.PAYMENT,
+            copia.amount_per_quota,
+            pend.payment_date,
+            pend.created_by_user_id,
+            "Pago confirmado de gasto compartido",
+        );
+        await this.gastosRepository.clearFavoriteIfFinalized(siblingId);
     }
 
     async confirmarPago(movementId, userId) {
@@ -44,10 +64,11 @@ export class CompartidosService {
             const [pend] = await this.movementsRepository.getPendingPaymentById(movementId);
             if (!pend) throw customError(ErrorCode.PAGO_PENDIENTE_NOT_FOUND);
 
-            await this.#assertConfirmerDePago(pend, userId);
+            const sibling = await this.#assertConfirmerDePago(pend, userId);
 
             const [confirmed] = await this.movementsRepository.confirmPendingPayment(movementId);
             await this.gastosRepository.clearFavoriteIfFinalized(pend.purchase_id);
+            await this.#registrarPagoEnCopia(sibling.sibling_id, pend);
             const [actor] = await this.gastosRepository.getUserName(userId);
             await triggerCompartidos(pend.created_by_user_id, 'pago.confirmado', {
                 purchaseId: pend.purchase_id,
@@ -74,6 +95,25 @@ export class CompartidosService {
         return deleted;
     }
 
+    async #vincularAlEmisor(entityId, userId, senderUserId) {
+        const yaVinculada = await this.entidadesFinancierasRepository.findByLinkedUser(userId, senderUserId);
+        if (yaVinculada.length) return;
+
+        await this.entidadesFinancierasRepository.vincularUsuario(entityId, userId, senderUserId);
+        try {
+            const [emisor] = await this.gastosRepository.getUserName(senderUserId);
+            await bestEffort(() =>
+                this.movementsRepository.createEntidadLog(
+                    entityId,
+                    MovementType.LINK,
+                    `Vinculada a ${emisor?.name ?? "un usuario"} al aceptar un gasto compartido`,
+                ),
+            );
+        } catch (err) {
+            logRed(`[historial entidad ${entityId}] no se pudo registrar LINK: ${err.message}`);
+        }
+    }
+
     async aprobar(gastoId, userId, financialEntityId, newEntityName) {
         return this.tx(async () => {
             const rows = await this.gastosRepository.getById(gastoId);
@@ -84,15 +124,15 @@ export class CompartidosService {
             if (gasto.status !== ExpenseStatus.PENDING_APPROVAL) throw customError(ErrorCode.GASTO_NO_PENDIENTE_APROBACION);
 
             let entityId = financialEntityId ?? null;
+            const [sender] = await this.gastosRepository.getEntityOwnerByPurchaseId(gasto.shared_from_id);
 
             if (!entityId && newEntityName) {
                 const [newEntity] = await this.entidadesFinancierasRepository.create(newEntityName, userId);
                 await this.movementsRepository.createEntidadLog(newEntity.id, MovementType.CREATION);
                 entityId = newEntity.id;
 
-                const senderRows = await this.gastosRepository.getEntityOwnerByPurchaseId(gasto.shared_from_id);
-                if (senderRows.length) {
-                    await this.entidadesFinancierasRepository.vincularUsuario(entityId, userId, senderRows[0].user_id);
+                if (sender) {
+                    await this.entidadesFinancierasRepository.vincularUsuario(entityId, userId, sender.user_id);
                 }
             }
 
@@ -100,6 +140,10 @@ export class CompartidosService {
 
             const entidad = await this.entidadesFinancierasRepository.getById(entityId, userId);
             if (!entidad.length) throw customError(ErrorCode.ENTIDAD_NOT_FOUND_O_AJENA);
+
+            if (sender && !entidad[0].linked_user_id) {
+                await this.#vincularAlEmisor(entityId, userId, sender.user_id);
+            }
 
             const [[updated], notifRows] = await Promise.all([
                 this.gastosRepository.aprobarGasto(gastoId, entityId),

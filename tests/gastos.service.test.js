@@ -342,6 +342,19 @@ describe("GastosService", () => {
             expect(logs[1]).toMatchObject({ gastoId: 10, amount: 100 });
         });
 
+        it("devuelve las cuotas pagas reales del gasto creado", async () => {
+            const [creado] = await crear({ payed_quotas: 2 });
+
+            expect(creado).toMatchObject({ payed_quotas: 2, pending_quotas: 0, finalization_date: null });
+            expect(creado.last_payment_date).toBeInstanceOf(Date);
+        });
+
+        it("marca como finalizado el gasto creado con todas las cuotas pagas", async () => {
+            const [creado] = await crear({ number_of_quotas: 2, payed_quotas: 2 });
+
+            expect(creado.finalization_date).toBeInstanceOf(Date);
+        });
+
         it("asigna las categorías y las devuelve en el gasto creado", async () => {
             const [creado] = await crear({ category_ids: [1, 2] });
 
