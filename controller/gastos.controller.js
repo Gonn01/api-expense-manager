@@ -169,6 +169,23 @@ export class GastosController {
         }
     }
 
+    revertirPago = async (req, res) => {
+        try {
+            const { id, movementId } = req.params;
+            const { userId } = req.session;
+
+            const data = await this.gastosService.revertirPago(id, movementId, userId);
+            const messages = {
+                revertido: "Pago revertido",
+                retirado: "Pago retirado",
+                solicitada: "Se pidió la reversión a la otra persona",
+            };
+            res.json({ message: messages[data.resultado], data });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    }
+
     refundCuota = async (req, res) => {
         try {
             const { id } = req.params;

@@ -448,8 +448,8 @@ export class GastosRepository {
       `SELECT DISTINCT ON (p.id)
           p.id AS purchase_id,
           sib.id AS sibling_id,
-          CASE WHEN p.shared_from_id IS NULL THEN sib.receiver_user_id
-               ELSE fe.user_id END AS counterparty_user_id
+          cp.id AS counterparty_user_id,
+          cp.name AS counterparty_name
        FROM purchases p
        JOIN purchases sib
          ON ((p.shared_from_id IS NULL AND sib.shared_from_id = p.id)
@@ -457,6 +457,8 @@ export class GastosRepository {
         AND sib.deleted = false
         AND sib.status = 'ACTIVE'
        LEFT JOIN financial_entities fe ON fe.id = sib.financial_entity_id
+       LEFT JOIN users cp
+         ON cp.id = CASE WHEN p.shared_from_id IS NULL THEN sib.receiver_user_id ELSE fe.user_id END
        WHERE p.id IN (${placeholders}) AND p.deleted = false
        ORDER BY p.id`,
       purchaseIds
@@ -467,8 +469,8 @@ export class GastosRepository {
     return await executeQuery(
       `SELECT
           sib.id AS sibling_id,
-          CASE WHEN p.shared_from_id IS NULL THEN sib.receiver_user_id
-               ELSE fe.user_id END AS counterparty_user_id
+          cp.id AS counterparty_user_id,
+          cp.name AS counterparty_name
        FROM purchases p
        JOIN purchases sib
          ON ((p.shared_from_id IS NULL AND sib.shared_from_id = p.id)
@@ -476,9 +478,64 @@ export class GastosRepository {
         AND sib.deleted = false
         AND sib.status = 'ACTIVE'
        LEFT JOIN financial_entities fe ON fe.id = sib.financial_entity_id
+       LEFT JOIN users cp
+         ON cp.id = CASE WHEN p.shared_from_id IS NULL THEN sib.receiver_user_id ELSE fe.user_id END
        WHERE p.id = $1 AND p.deleted = false
        LIMIT 1`,
       [purchaseId]
+    );
+  }
+
+  async lockPurchases(ids) {
+    const unique = [...new Set(ids.map(Number))].filter(Number.isFinite).sort((a, b) => a - b);
+    if (!unique.length) return [];
+    const placeholders = unique.map((_, i) => `$${i + 1}`).join(", ");
+    return await executeQuery(
+      `SELECT id FROM purchases WHERE id IN (${placeholders}) ORDER BY id FOR UPDATE`,
+      unique
+    );
+  }
+
+  async getReversionesCompartidas(userId) {
+    return await executeQuery(
+      `WITH rev AS (
+          SELECT
+             m.id AS movement_id,
+             m.amount,
+             m.payment_date,
+             m.reversal_requested_at,
+             m.reversal_requested_by_user_id,
+             m.purchase_id,
+             p.name AS gasto_name,
+             p.currency_type,
+             p.number_of_quotas,
+             owner_fe.user_id AS owner_user_id,
+             CASE WHEN p.shared_from_id IS NULL THEN sib.receiver_user_id
+                  ELSE fe.user_id END AS counterparty_user_id
+          FROM purchases_movements m
+          JOIN purchases p ON p.id = m.purchase_id AND p.deleted = false
+          JOIN financial_entities owner_fe ON owner_fe.id = p.financial_entity_id
+          JOIN purchases sib
+            ON ((p.shared_from_id IS NULL AND sib.shared_from_id = p.id)
+             OR (p.shared_from_id IS NOT NULL AND sib.id = p.shared_from_id))
+           AND sib.deleted = false
+           AND sib.status = 'ACTIVE'
+          LEFT JOIN financial_entities fe ON fe.id = sib.financial_entity_id
+          WHERE m.movement_type = 'PAYMENT'
+            AND m.reversal_requested_by_user_id IS NOT NULL
+            AND (m.paired_movement_id IS NULL OR m.id < m.paired_movement_id)
+       )
+       SELECT rev.*,
+              requester.name AS requester_name,
+              owner_u.name AS owner_name,
+              counterparty_u.name AS counterparty_name
+       FROM rev
+       JOIN users requester ON requester.id = rev.reversal_requested_by_user_id
+       JOIN users owner_u ON owner_u.id = rev.owner_user_id
+       JOIN users counterparty_u ON counterparty_u.id = rev.counterparty_user_id
+       WHERE rev.owner_user_id = $1 OR rev.counterparty_user_id = $1
+       ORDER BY rev.reversal_requested_at DESC`,
+      [userId]
     );
   }
 

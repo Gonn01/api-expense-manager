@@ -21,6 +21,16 @@ export class DashboardRepository {
                   'number_of_quotas', g.number_of_quotas,
                   'amount_per_quota', CASE WHEN g.number_of_quotas > 0 THEN g.amount::numeric / g.number_of_quotas ELSE g.amount END,
                   'payed_quotas', (SELECT COUNT(*) FROM purchases_movements WHERE purchase_id = g.id AND movement_type = 'PAYMENT'),
+                  'pending_quotas', (SELECT COUNT(*) FROM purchases_movements WHERE purchase_id = g.id AND movement_type = 'PENDING_PAYMENT'),
+                  'counterparty_pending_quotas', (
+                    SELECT COUNT(*) FROM purchases_movements sm
+                    JOIN purchases sib ON sib.id = sm.purchase_id
+                    WHERE sm.movement_type = 'PENDING_PAYMENT'
+                      AND sib.deleted = false
+                      AND sib.status = 'ACTIVE'
+                      AND ((g.shared_from_id IS NULL AND sib.shared_from_id = g.id)
+                        OR (g.shared_from_id IS NOT NULL AND sib.id = g.shared_from_id))
+                  ),
                   'currency_type', g.currency_type,
                   'type', g.type,
                   'fixed_expense', g.fixed_expense,

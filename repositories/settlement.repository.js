@@ -55,7 +55,7 @@ export class SettlementRepository {
             `INSERT INTO settlement_session_items (session_id, purchase_id, quota_number)
              SELECT $1::int, v.id,
                     (SELECT COUNT(*)::int FROM purchases_movements m
-                     WHERE m.purchase_id = v.id AND m.movement_type = 'PAYMENT')
+                     WHERE m.purchase_id = v.id AND m.movement_type IN ('PAYMENT', 'PENDING_PAYMENT'))
              FROM (VALUES ${values}) AS v(id)
              ON CONFLICT (session_id, purchase_id)
              DO UPDATE SET
@@ -164,10 +164,15 @@ export class SettlementRepository {
 
     async listSnapshots(userId) {
         return await executeQuery(
-            `SELECT id, month, started_at, finished_at, totals, created_at
-             FROM settlement_snapshots
-             WHERE user_id = $1
-             ORDER BY finished_at DESC`,
+            `SELECT s.id, s.month, s.started_at, s.finished_at, s.totals, s.created_at,
+                    (SELECT COUNT(*)
+                     FROM jsonb_array_elements(s.items::jsonb) it
+                     JOIN purchases_movements m ON m.id = (it->>'movement_id')::int
+                     WHERE (it->>'shared')::boolean IS TRUE
+                       AND m.movement_type = 'PENDING_PAYMENT')::int AS pending_count
+             FROM settlement_snapshots s
+             WHERE s.user_id = $1
+             ORDER BY s.finished_at DESC`,
             [userId],
         );
     }

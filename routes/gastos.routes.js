@@ -14,6 +14,7 @@ router.put('/:id/postergar', controller.postergar);
 router.put('/:id/favorito', controller.favorito);
 router.post("/:id/settle-quota", controller.settleQuota);
 router.post("/:id/refund-cuota", controller.refundCuota);
+router.post("/:id/pagos/:movementId/revertir", controller.revertirPago);
 router.post("/:id/restaurar", controller.restaurar);
 router.post("/settle-lote", controller.settleQuotasLote);
 

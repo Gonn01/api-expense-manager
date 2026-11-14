@@ -5,6 +5,7 @@ import { EntidadesFinancierasRepository } from "../repositories/entidades-financ
 import { CategoriasRepository } from "../repositories/categorias.repository.js";
 import { SettlementRepository } from "../repositories/settlement.repository.js";
 import { GastosService } from "../services/gastos.service.js";
+import { PagosCompartidosService } from "../services/pagos-compartidos.service.js";
 
 export function makeGastosController() {
     const gastosRepository = new GastosRepository();
@@ -13,12 +14,19 @@ export function makeGastosController() {
     const categoriasRepository = new CategoriasRepository();
     const settlementRepository = new SettlementRepository();
 
+    const pagosCompartidosService = new PagosCompartidosService({
+        gastosRepository,
+        movementsRepository,
+        settlementRepository,
+    });
+
     const gastosService = new GastosService({
         gastosRepository,
         movementsRepository,
         entidadesFinancierasRepository,
         categoriasRepository,
-        settlementRepository
+        settlementRepository,
+        pagosCompartidosService,
     });
 
     const gastosController = new GastosController(gastosService);

@@ -218,6 +218,20 @@ describe("GastosController", () => {
         });
     });
 
+    describe("revertirPago", () => {
+        it("revierte un pago puntual e informa qué pasó", async () => {
+            const req = makeReq({ params: { id: "10", movementId: "500" } });
+            const res = makeRes();
+            const data = { resultado: "solicitada", gasto: { id: 10 } };
+            service.revertirPago = vi.fn().mockResolvedValue(data);
+
+            await controller.revertirPago(req, res);
+
+            expect(service.revertirPago).toHaveBeenCalledWith("10", "500", 1);
+            expect(res.json).toHaveBeenCalledWith({ message: "Se pidió la reversión a la otra persona", data });
+        });
+    });
+
     describe("actualizarCategorias", () => {
         it("actualiza las categorías en nombre del usuario de la sesión", async () => {
             const req = makeReq({ params: { id: "10" }, body: { category_ids: [1, 2] } });

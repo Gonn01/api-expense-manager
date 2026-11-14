@@ -1,98 +1,69 @@
-import { MovementType, ExpenseStatus } from "../utils/enums.js";
+import { MovementType, ExpenseStatus, PusherEvent } from "../utils/enums.js";
 import { triggerCompartidos } from "../utils/pusher.js";
 import { customError, ErrorCode } from "../utils/errors.js";
 import { logRed } from "../utils/logs_custom.js";
 import { withTransaction, bestEffort } from "../db.js";
 
 export class CompartidosService {
-    constructor({ gastosRepository, entidadesFinancierasRepository, movementsRepository, runInTransaction = withTransaction }) {
+    constructor({
+        gastosRepository,
+        entidadesFinancierasRepository,
+        movementsRepository,
+        pagosCompartidosService,
+        runInTransaction = withTransaction,
+    }) {
         this.gastosRepository = gastosRepository;
         this.entidadesFinancierasRepository = entidadesFinancierasRepository;
         this.movementsRepository = movementsRepository;
+        this.pagosCompartidosService = pagosCompartidosService;
         this.tx = runInTransaction;
     }
 
     async getCompartidos(userId) {
-        const [recibidos, emitidos, pagosRows] = await Promise.all([
+        const [recibidos, emitidos, pagosRows, reversionesRows] = await Promise.all([
             this.gastosRepository.getCompartidosRecibidos(userId),
             this.gastosRepository.getCompartidosEmitidos(userId),
             this.gastosRepository.getPagosCompartidos(userId),
+            this.gastosRepository.getReversionesCompartidas(userId),
         ]);
 
-        const porConfirmar = [];
-        const esperando = [];
+        const pagos = { porConfirmar: [], esperando: [] };
         for (const r of pagosRows) {
-            if (String(r.created_by_user_id) === String(userId)) esperando.push(r);
-            else porConfirmar.push(r);
+            if (String(r.created_by_user_id) === String(userId)) pagos.esperando.push(r);
+            else pagos.porConfirmar.push(r);
         }
 
-        return { recibidos, emitidos, pagos: { porConfirmar, esperando } };
-    }
-
-    async #assertConfirmerDePago(pend, userId) {
-        if (String(pend.created_by_user_id) === String(userId)) {
-            throw customError(ErrorCode.NO_AUTORIZADO);
+        const reversiones = { porConfirmar: [], esperando: [] };
+        for (const r of reversionesRows) {
+            if (String(r.reversal_requested_by_user_id) === String(userId)) reversiones.esperando.push(r);
+            else reversiones.porConfirmar.push(r);
         }
-        const [sibling] = await this.gastosRepository.getSharedSibling(pend.purchase_id);
-        if (!sibling || String(sibling.counterparty_user_id) !== String(userId)) {
-            throw customError(ErrorCode.NO_AUTORIZADO);
-        }
-        return sibling;
-    }
 
-    async #registrarPagoEnCopia(siblingId, pend) {
-        const [copia] = await this.gastosRepository.getById(siblingId);
-        if (!copia) return;
-
-        const yaSaldada =
-            !copia.fixed_expense && (Number(copia.payed_quotas) || 0) >= Number(copia.number_of_quotas);
-        if (yaSaldada) return;
-
-        await this.movementsRepository.createGastoLog(
-            siblingId,
-            MovementType.PAYMENT,
-            copia.amount_per_quota,
-            pend.payment_date,
-            pend.created_by_user_id,
-            "Pago confirmado de gasto compartido",
-        );
-        await this.gastosRepository.clearFavoriteIfFinalized(siblingId);
+        return { recibidos, emitidos, pagos, reversiones };
     }
 
     async confirmarPago(movementId, userId) {
-        return this.tx(async () => {
-            const [pend] = await this.movementsRepository.getPendingPaymentById(movementId);
-            if (!pend) throw customError(ErrorCode.PAGO_PENDIENTE_NOT_FOUND);
-
-            const sibling = await this.#assertConfirmerDePago(pend, userId);
-
-            const [confirmed] = await this.movementsRepository.confirmPendingPayment(movementId);
-            await this.gastosRepository.clearFavoriteIfFinalized(pend.purchase_id);
-            await this.#registrarPagoEnCopia(sibling.sibling_id, pend);
-            const [actor] = await this.gastosRepository.getUserName(userId);
-            await triggerCompartidos(pend.created_by_user_id, 'pago.confirmado', {
-                purchaseId: pend.purchase_id,
-                actorName: actor?.name ?? null,
-            });
-
-            return confirmed;
-        });
+        return this.pagosCompartidosService.confirmar(movementId, userId);
     }
 
     async rechazarPago(movementId, userId) {
-        const [pend] = await this.movementsRepository.getPendingPaymentById(movementId);
-        if (!pend) throw customError(ErrorCode.PAGO_PENDIENTE_NOT_FOUND);
+        return this.pagosCompartidosService.rechazar(movementId, userId);
+    }
 
-        await this.#assertConfirmerDePago(pend, userId);
+    async retirarPago(movementId, userId) {
+        return this.pagosCompartidosService.retirar(movementId, userId);
+    }
 
-        const [deleted] = await this.movementsRepository.deletePendingPayment(movementId);
-        const [actor] = await this.gastosRepository.getUserName(userId);
-        await triggerCompartidos(pend.created_by_user_id, 'pago.rechazado', {
-            purchaseId: pend.purchase_id,
-            actorName: actor?.name ?? null,
-        });
+    async aceptarReversion(movementId, userId) {
+        return this.pagosCompartidosService.aceptarReversion(movementId, userId);
+    }
 
-        return deleted;
+    async rechazarReversion(movementId, userId) {
+        return this.pagosCompartidosService.rechazarReversion(movementId, userId);
+    }
+
+    async cancelarReversion(movementId, userId) {
+        return this.pagosCompartidosService.cancelarReversion(movementId, userId);
     }
 
     async #vincularAlEmisor(entityId, userId, senderUserId) {
@@ -167,7 +138,7 @@ export class CompartidosService {
             await Promise.all([
                 this.gastosRepository.updateStatus(gasto.shared_from_id, ExpenseStatus.ACTIVE),
                 this.movementsRepository.createGastoLog(gastoId, MovementType.CREATION),
-                notif && triggerCompartidos(notif.sender_user_id, 'compartido.aprobado', {
+                notif && triggerCompartidos(notif.sender_user_id, PusherEvent.COMPARTIDO_APROBADO, {
                     gastoId,
                     entityId: notif.sender_entity_id,
                     receiverName: notif.receiver_name,
@@ -195,7 +166,7 @@ export class CompartidosService {
 
             await Promise.all([
                 this.gastosRepository.updateStatus(gasto.shared_from_id, ExpenseStatus.REJECTED),
-                senderRows.length && triggerCompartidos(senderRows[0].user_id, 'compartido.rechazado', { gastoId }),
+                senderRows.length && triggerCompartidos(senderRows[0].user_id, PusherEvent.COMPARTIDO_RECHAZADO, { gastoId }),
             ]);
 
             return updated;
@@ -221,7 +192,7 @@ export class CompartidosService {
             const [[updated]] = await Promise.all([
                 this.gastosRepository.updateStatus(copy.id, ExpenseStatus.PENDING_APPROVAL),
                 this.gastosRepository.updateStatus(gastoId, ExpenseStatus.PENDING_APPROVAL),
-                triggerCompartidos(copy.receiver_user_id, 'compartido.nuevo', { gastoId }),
+                triggerCompartidos(copy.receiver_user_id, PusherEvent.COMPARTIDO_NUEVO, { gastoId }),
             ]);
 
             return updated;

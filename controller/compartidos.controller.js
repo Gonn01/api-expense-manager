@@ -75,4 +75,52 @@ export class CompartidosController {
             return handleError(res, err);
         }
     }
+
+    retirarPago = async (req, res) => {
+        try {
+            const { movementId } = req.params;
+            const { userId } = req.session;
+
+            const data = await this.compartidosService.retirarPago(movementId, userId);
+            res.json({ message: "Pago retirado", data });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    }
+
+    aceptarReversion = async (req, res) => {
+        try {
+            const { movementId } = req.params;
+            const { userId } = req.session;
+
+            const data = await this.compartidosService.aceptarReversion(movementId, userId);
+            res.json({ message: "Reversión aceptada", data });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    }
+
+    rechazarReversion = async (req, res) => {
+        try {
+            const { movementId } = req.params;
+            const { userId } = req.session;
+
+            const data = await this.compartidosService.rechazarReversion(movementId, userId);
+            res.json({ message: "Reversión rechazada", data });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    }
+
+    cancelarReversion = async (req, res) => {
+        try {
+            const { movementId } = req.params;
+            const { userId } = req.session;
+
+            const data = await this.compartidosService.cancelarReversion(movementId, userId);
+            res.json({ message: "Solicitud de reversión cancelada", data });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    }
 }

@@ -1,4 +1,4 @@
-import { MovementType, ExpenseStatus, ExpenseType, Currency } from "../utils/enums.js";
+import { MovementType, ExpenseStatus, ExpenseType, Currency, PusherEvent } from "../utils/enums.js";
 import { triggerCompartidos } from "../utils/pusher.js";
 import { customError, ErrorCode } from "../utils/errors.js";
 import { logRed } from "../utils/logs_custom.js";
@@ -14,6 +14,7 @@ export class GastosService {
         entidadesFinancierasRepository,
         categoriasRepository,
         settlementRepository,
+        pagosCompartidosService,
         runInTransaction = withTransaction,
     }) {
         this.gastosRepository = gastosRepository;
@@ -21,6 +22,7 @@ export class GastosService {
         this.entidadesFinancierasRepository = entidadesFinancierasRepository;
         this.categoriasRepository = categoriasRepository;
         this.settlementRepository = settlementRepository;
+        this.pagosCompartidosService = pagosCompartidosService;
         this.tx = runInTransaction;
     }
 
@@ -102,18 +104,49 @@ export class GastosService {
         }
     }
 
+    #cuotasCubiertas({ fixed_expense, payed_quotas, pending_quotas, number_of_quotas }) {
+        return (
+            !fixed_expense &&
+            (Number(payed_quotas) || 0) + (Number(pending_quotas) || 0) >= Number(number_of_quotas ?? 1)
+        );
+    }
+
+    #assertCuotasLibres(gasto) {
+        this.#assertQuotasRestantes(gasto);
+        if (this.#cuotasCubiertas(gasto)) {
+            throw customError(ErrorCode.GASTO_CUOTAS_CUBIERTAS);
+        }
+    }
+
+    async errorDeMarcado(ids, userId) {
+        const valid = [...new Set(ids.map(String))].filter((id) => /^\d+$/.test(id));
+        if (!valid.length) return new Map();
+        const rows = await this.gastosRepository.getByIdsWithOwner(valid, userId);
+        const errores = new Map();
+        for (const gasto of rows) {
+            if (this.#isFullyPaid(gasto)) errores.set(Number(gasto.id), ErrorCode.GASTO_YA_SALDADO);
+            else if (this.#cuotasCubiertas(gasto)) errores.set(Number(gasto.id), ErrorCode.GASTO_CUOTAS_CUBIERTAS);
+        }
+        return errores;
+    }
+
     async getById(id, userId) {
         const row = await this.#getOwned(id, userId, { allowReceiver: true });
 
-        const [movements, categories, editLocks] = await Promise.all([
+        const [movements, categories, editLocks, siblings] = await Promise.all([
             this.movementsRepository.getMovementsByGasto(id),
             this.categoriasRepository.getCategoriasByGasto(id),
             row[0].financial_entity_id ? this.#editLocks(row[0], userId) : null,
+            this.gastosRepository.getSharedSibling(id),
         ]);
 
+        const sibling = siblings?.[0];
         row[0].movements = movements;
         row[0].categories = categories;
         row[0].edit_locks = editLocks;
+        row[0].shared_counterparty = sibling
+            ? { user_id: sibling.counterparty_user_id, name: sibling.counterparty_name ?? null }
+            : null;
         return row[0];
     }
 
@@ -462,6 +495,10 @@ export class GastosService {
             const current = await this.#getOwned(id, userId);
             const linkedId = current[0].linked_purchase_id;
 
+            if (this.pagosCompartidosService) {
+                await this.pagosCompartidosService.rechazarPendientesDeContraparte(id, userId);
+            }
+
             const row = await this.gastosRepository.delete(id);
 
             if (!row || row.length === 0) {
@@ -638,7 +675,7 @@ export class GastosService {
             ]);
 
             if (entidad[0].linked_user_id) {
-                await triggerCompartidos(entidad[0].linked_user_id, 'compartido.nuevo', { gastoId });
+                await triggerCompartidos(entidad[0].linked_user_id, PusherEvent.COMPARTIDO_NUEVO, { gastoId });
                 const sharedRows = await this.gastosRepository.create({
                     financial_entity_id: null,
                     name,
@@ -755,7 +792,7 @@ export class GastosService {
                 this.#getOwnedWithOwner(purchase_id, userId),
                 direct ? null : this.getOpenSettlementSession(userId),
             ]);
-            this.#assertQuotasRestantes(rows[0]);
+            this.#assertCuotasLibres(rows[0]);
 
             if (session) {
                 if (rows[0].is_postponed) {
@@ -776,19 +813,36 @@ export class GastosService {
         return this.tx(async () => {
             if (userId == null) throw customError(ErrorCode.NO_AUTORIZADO);
             const ids = [...new Set(purchaseIds.map(String))].filter((id) => /^\d+$/.test(id));
-            if (!ids.length) return { kept: [], discarded: purchaseIds.map(Number) };
+            if (!ids.length) return { kept: [], discarded: purchaseIds.map(Number), payments: {} };
 
-            const [rows, siblings] = await Promise.all([
+            const siblings = await this.gastosRepository.getSharedSiblings(ids);
+            const siblingById = new Map(
+                siblings
+                    .filter((s) => s.counterparty_user_id && String(s.counterparty_user_id) !== String(userId))
+                    .map((s) => [String(s.purchase_id), s]),
+            );
+            const siblingIds = [...siblingById.values()].map((s) => s.sibling_id);
+            await this.gastosRepository.lockPurchases([...ids, ...siblingIds]);
+
+            const [rows, pendientesDelOtro] = await Promise.all([
                 this.gastosRepository.getByIdsWithOwner(ids, userId),
-                this.gastosRepository.getSharedSiblings(ids),
+                this.movementsRepository.getPendingPaymentsByPurchases(siblingIds),
             ]);
             const byId = new Map(rows.map((r) => [String(r.id), r]));
-            const siblingById = new Map(siblings.map((s) => [String(s.purchase_id), s]));
+            const pendientesPorCopia = new Map();
+            for (const pend of pendientesDelOtro) {
+                if (String(pend.created_by_user_id) === String(userId)) continue;
+                const key = String(pend.purchase_id);
+                if (!pendientesPorCopia.has(key)) pendientesPorCopia.set(key, []);
+                pendientesPorCopia.get(key).push(pend);
+            }
 
             const kept = [];
             const discarded = [];
             const logs = [];
+            const confirmaciones = [];
             const notifications = [];
+            const payments = {};
 
             for (const id of ids) {
                 const gasto = byId.get(id);
@@ -798,15 +852,11 @@ export class GastosService {
                     discarded.push(Number(id));
                     continue;
                 }
-                kept.push(Number(id));
 
                 const sibling = siblingById.get(id);
-                const esCompartido =
-                    sibling &&
-                    sibling.counterparty_user_id &&
-                    String(sibling.counterparty_user_id) !== String(userId);
 
-                if (!esCompartido) {
+                if (!sibling) {
+                    kept.push(Number(id));
                     logs.push({
                         gastoId: gasto.id,
                         movementType: MovementType.PAYMENT,
@@ -816,12 +866,19 @@ export class GastosService {
                     continue;
                 }
 
-                const yaCubierto =
-                    !gasto.fixed_expense &&
-                    (Number(gasto.payed_quotas) || 0) + (Number(gasto.pending_quotas) || 0) >=
-                        Number(gasto.number_of_quotas);
-                if (yaCubierto) continue;
+                const pendDelOtro = pendientesPorCopia.get(String(sibling.sibling_id))?.shift();
+                if (pendDelOtro && this.pagosCompartidosService) {
+                    kept.push(Number(id));
+                    confirmaciones.push({ pend: pendDelOtro, gasto, sibling });
+                    continue;
+                }
 
+                if (this.#cuotasCubiertas(gasto)) {
+                    discarded.push(Number(id));
+                    continue;
+                }
+
+                kept.push(Number(id));
                 logs.push({
                     gastoId: gasto.id,
                     movementType: MovementType.PENDING_PAYMENT,
@@ -832,19 +889,38 @@ export class GastosService {
                 notifications.push([sibling.counterparty_user_id, gasto.id]);
             }
 
-            await this.movementsRepository.createGastoLogs(logs);
+            const inserted = (await this.movementsRepository.createGastoLogs(logs)) ?? [];
+            for (const row of inserted) {
+                const sibling = siblingById.get(String(row.purchase_id));
+                payments[row.purchase_id] = {
+                    movement_id: row.id,
+                    shared: Boolean(sibling),
+                    role: "pago",
+                    counterparty_name: sibling?.counterparty_name ?? null,
+                };
+            }
+
+            for (const { pend, gasto, sibling } of confirmaciones) {
+                await this.pagosCompartidosService.confirmarDesdeCopia(pend, gasto.id, userId);
+                payments[gasto.id] = {
+                    movement_id: pend.id,
+                    shared: true,
+                    role: "confirmacion",
+                    counterparty_name: sibling.counterparty_name ?? null,
+                };
+            }
 
             await Promise.all([
                 this.gastosRepository.clearFavoritesIfFinalized(kept),
                 ...notifications.map(([counterparty, purchaseId]) =>
-                    triggerCompartidos(counterparty, "pago.pendiente", { purchaseId }),
+                    triggerCompartidos(counterparty, PusherEvent.PAGO_PENDIENTE, { purchaseId }),
                 ),
             ]);
 
             for (const id of purchaseIds) {
                 if (!/^\d+$/.test(String(id))) discarded.push(id);
             }
-            return { kept, discarded };
+            return { kept, discarded, payments };
         });
     }
 
@@ -863,17 +939,23 @@ export class GastosService {
             String(sibling.counterparty_user_id) !== String(userId);
 
         if (esCompartido) {
-            const yaCubierto =
-                !gasto.fixed_expense &&
-                (Number(gasto.payed_quotas) || 0) + (Number(gasto.pending_quotas) || 0) >=
-                    Number(gasto.number_of_quotas);
+            await this.gastosRepository.lockPurchases([gasto.id, sibling.sibling_id]);
 
-            if (yaCubierto) return { pending: true, skipped: true };
+            if (this.pagosCompartidosService) {
+                const pendientes = await this.movementsRepository.getPendingPaymentsByPurchases([sibling.sibling_id]);
+                const pendDelOtro = pendientes.find((p) => String(p.created_by_user_id) !== String(userId));
+                if (pendDelOtro) {
+                    await this.pagosCompartidosService.confirmarDesdeCopia(pendDelOtro, gasto.id, userId);
+                    return { pending: false, confirmed: true };
+                }
+            }
+
+            if (this.#cuotasCubiertas(gasto)) return { pending: true, skipped: true };
 
             await this.movementsRepository.createGastoLog(
                 gasto.id, MovementType.PENDING_PAYMENT, gasto.amount_per_quota, paymentDate, userId,
             );
-            await triggerCompartidos(sibling.counterparty_user_id, 'pago.pendiente', {
+            await triggerCompartidos(sibling.counterparty_user_id, PusherEvent.PAGO_PENDIENTE, {
                 purchaseId: gasto.id,
             });
             return { pending: true };
@@ -885,14 +967,60 @@ export class GastosService {
         return { pending: false };
     }
 
+    #ultimoPago(movements) {
+        return movements
+            .filter((m) => m.movement_type === MovementType.PAYMENT)
+            .sort((a, b) => {
+                const byDate = new Date(b.payment_date ?? 0) - new Date(a.payment_date ?? 0);
+                if (byDate !== 0) return byDate;
+                return new Date(b.created_at ?? 0) - new Date(a.created_at ?? 0);
+            })[0];
+    }
+
+    async #revertirMovimiento(gasto, movement, userId) {
+        if (movement.movement_type === MovementType.PENDING_PAYMENT) {
+            if (String(movement.created_by_user_id) !== String(userId)) {
+                throw customError(ErrorCode.PAGO_REGISTRADO_POR_OTRO);
+            }
+            await this.pagosCompartidosService.retirar(movement.id, userId);
+            return "retirado";
+        }
+
+        const [sibling] = await this.gastosRepository.getSharedSibling(gasto.id);
+        if (sibling && this.pagosCompartidosService) {
+            await this.pagosCompartidosService.solicitarReversion(movement.id, userId);
+            return "solicitada";
+        }
+
+        const [deleted] = await this.movementsRepository.deletePaymentsByIds([movement.id]);
+        if (!deleted) throw customError(ErrorCode.PAGO_NOT_FOUND);
+        await this.movementsRepository.createGastoLog(gasto.id, MovementType.REFUND, deleted.amount ?? null, new Date());
+        return "revertido";
+    }
+
+    async revertirPago(purchase_id, movementId, userId) {
+        const resultado = await this.tx(async () => {
+            const [gasto] = await this.#getOwnedWithOwner(purchase_id, userId);
+            const [movement] = await this.movementsRepository.getPaymentById(movementId);
+            if (!movement || String(movement.purchase_id) !== String(gasto.id)) {
+                throw customError(ErrorCode.PAGO_NOT_FOUND);
+            }
+            return await this.#revertirMovimiento(gasto, movement, userId);
+        });
+
+        return { resultado, gasto: await this.getById(purchase_id, userId) };
+    }
+
     async refundCuota(purchase_id, userId) {
         return this.tx(async () => {
             const rows = await this.#getOwned(purchase_id, userId);
             if (rows[0].payed_quotas === 0) throw customError(ErrorCode.SIN_CUOTAS_PARA_REVERTIR);
 
-            const deleted = await this.movementsRepository.deleteLastPayment(purchase_id);
-            await this.movementsRepository.createGastoLog(purchase_id, MovementType.REFUND, deleted[0]?.amount ?? null, new Date());
+            const movements = await this.movementsRepository.getMovementsByGasto(purchase_id);
+            const ultimo = this.#ultimoPago(movements);
+            if (!ultimo) throw customError(ErrorCode.SIN_CUOTAS_PARA_REVERTIR);
 
+            await this.#revertirMovimiento(rows[0], ultimo, userId);
             return await this.gastosRepository.getById(purchase_id);
         });
     }
@@ -931,6 +1059,11 @@ export class GastosService {
 
             if (!gasto.fixed_expense && gasto.payed_quotas >= gasto.number_of_quotas) {
                 failed.push({ id, reason: "Todas las cuotas ya están pagas" });
+                continue;
+            }
+
+            if (this.#cuotasCubiertas(gasto)) {
+                failed.push({ id, reason: "Las cuotas que quedan ya tienen pagos esperando confirmación" });
                 continue;
             }
 

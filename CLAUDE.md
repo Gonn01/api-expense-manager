@@ -76,7 +76,7 @@ There is no DI container/framework — factories instantiate everything by hand.
 
 **Config**: `config/env.js` loads `.env` via `dotenv` and exports `JWT_SECRET`/`DATABASE_URL` as named constants — other modules import these constants rather than reading `process.env` directly.
 
-**Migrations**: there is no schema-migration tool (no Prisma/Knex/node-pg-migrate); the Postgres schema is managed outside this repo. `migrate.js` is misleadingly named — it's a one-off script that imports a legacy app's `data.json` export into the current schema, not a schema migrator.
+**Migrations**: there is no schema-migration tool (no Prisma/Knex/node-pg-migrate); the Postgres schema is managed outside this repo. Schema changes are written as `migrations/manual/<date>_<reason>.sql` and run by hand against the database before deploying the code that needs them. `migrate.js` is misleadingly named — it's a one-off script that imports a legacy app's `data.json` export into the current schema, not a schema migrator.
 
 ## Conventions
 
