@@ -33,6 +33,9 @@ export async function ensureGastosSchema() {
     ["purchases.is_favorite", `
       ALTER TABLE purchases ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN NOT NULL DEFAULT false
     `],
+    ["purchases.deleted_with_entity", `
+      ALTER TABLE purchases ADD COLUMN IF NOT EXISTS deleted_with_entity BOOLEAN NOT NULL DEFAULT false
+    `],
     ["financial_entities.is_favorite", `
       ALTER TABLE financial_entities ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN NOT NULL DEFAULT false
     `],
@@ -197,7 +200,7 @@ export class GastosRepository {
 
   async restore(id) {
     return await executeQuery(
-      `UPDATE purchases SET deleted = false WHERE id = $1 AND deleted = true RETURNING id`,
+      `UPDATE purchases SET deleted = false, deleted_with_entity = false WHERE id = $1 AND deleted = true RETURNING id`,
       [id]
     );
   }
@@ -258,8 +261,43 @@ export class GastosRepository {
 
   async delete(id) {
     return await executeQuery(
-      `UPDATE purchases SET deleted = true WHERE id = $1 RETURNING id`,
+      `UPDATE purchases SET deleted = true, deleted_with_entity = false WHERE id = $1 RETURNING id`,
       [id]
+    );
+  }
+
+  async getIdsByEntidad(entidadId) {
+    return await executeQuery(
+      `SELECT id FROM purchases WHERE financial_entity_id = $1 AND deleted = false`,
+      [entidadId]
+    );
+  }
+
+  async deleteByEntidad(entidadId) {
+    return await executeQuery(
+      `UPDATE purchases SET deleted = true, deleted_with_entity = true
+       WHERE financial_entity_id = $1 AND deleted = false
+       RETURNING id`,
+      [entidadId]
+    );
+  }
+
+  async restoreByEntidad(entidadId) {
+    return await executeQuery(
+      `UPDATE purchases SET deleted = false, deleted_with_entity = false
+       WHERE financial_entity_id = $1 AND deleted = true AND deleted_with_entity = true
+       RETURNING id`,
+      [entidadId]
+    );
+  }
+
+  async unlinkMany(ids) {
+    if (!ids.length) return [];
+    const placeholders = ids.map((_, i) => `$${i + 1}`).join(", ");
+    return await executeQuery(
+      `UPDATE purchases SET linked_purchase_id = NULL
+       WHERE id IN (${placeholders}) OR linked_purchase_id IN (${placeholders})`,
+      ids
     );
   }
 

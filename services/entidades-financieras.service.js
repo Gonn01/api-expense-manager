@@ -9,8 +9,12 @@ export class EntidadesFinancierasService {
     gastosRepository,
     movementsRepository,
     authRepository,
+    settlementRepository = null,
+    pagosCompartidosService = null,
     runInTransaction = withTransaction,
   }) {
+    this.settlementRepository = settlementRepository;
+    this.pagosCompartidosService = pagosCompartidosService;
     this.entidadesFinancierasRepository = entidadesFinancierasRepository;
     this.gastosRepository = gastosRepository;
     this.movementsRepository = movementsRepository;
@@ -32,7 +36,17 @@ export class EntidadesFinancierasService {
   }
 
   async restaurar(id, userId) {
-    return await this.entidadesFinancierasRepository.restaurar(id, userId);
+    return this.tx(async () => {
+      const rows = await this.entidadesFinancierasRepository.restaurar(id, userId);
+      if (!rows.length) throw customError(ErrorCode.ENTIDAD_NOT_FOUND);
+
+      const restored = await this.gastosRepository.restoreByEntidad(id);
+      await this.movementsRepository.createGastoLogs(
+        restored.map((g) => ({ gastoId: g.id, movementType: MovementType.RESTORE })),
+      );
+
+      return rows;
+    });
   }
 
   async obtenerPorId(id, userId) {
@@ -105,13 +119,33 @@ export class EntidadesFinancierasService {
   }
 
   async eliminar(id, userId) {
-    const deletedRows = await this.entidadesFinancierasRepository.delete(id, userId);
+    return this.tx(async () => {
+      const [[entidad], gastos, session] = await Promise.all([
+        this.entidadesFinancierasRepository.getById(id, userId),
+        this.gastosRepository.getIdsByEntidad(id),
+        this.settlementRepository?.getOpenSession(userId) ?? null,
+      ]);
+      if (!entidad) throw customError(ErrorCode.ENTIDAD_NOT_FOUND);
 
-    if (deletedRows.length === 0) {
-      throw customError(ErrorCode.ENTIDAD_NOT_FOUND);
-    }
+      const ids = gastos.map((g) => g.id);
+      if (this.pagosCompartidosService) {
+        await Promise.all(
+          ids.map((gastoId) => this.pagosCompartidosService.rechazarPendientesDeContraparte(gastoId, userId)),
+        );
+      }
 
-    return deletedRows[0];
+      const [[deleted]] = await Promise.all([
+        this.entidadesFinancierasRepository.delete(id, userId),
+        this.gastosRepository.deleteByEntidad(id),
+        this.gastosRepository.unlinkMany(ids),
+        this.movementsRepository.createGastoLogs(
+          ids.map((gastoId) => ({ gastoId, movementType: MovementType.DELETE })),
+        ),
+        session ? this.settlementRepository.removeItems(session.id, ids) : null,
+      ]);
+
+      return { ...deleted, deleted_purchase_ids: ids.map(String) };
+    });
   }
 
   async obtenerMovements(id) {
