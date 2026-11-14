@@ -43,6 +43,11 @@ export class GastosService {
         return session;
     }
 
+    async #nombreDe(userId) {
+        const [row] = (await this.gastosRepository.getUserName(userId)) ?? [];
+        return row?.name ?? null;
+    }
+
     async getOpenSettlementSession(userId) {
         if (!this.settlementRepository || !userId) return null;
         return await this.settlementRepository.getOpenSession(userId);
@@ -131,23 +136,41 @@ export class GastosService {
     }
 
     async getById(id, userId) {
-        const row = await this.#getOwned(id, userId, { allowReceiver: true });
+        const [, detalle] = await Promise.all([
+            this.#getOwned(id, userId, { allowReceiver: true }),
+            this.#detalle(id, userId),
+        ]);
+        return detalle;
+    }
 
-        const [movements, categories, editLocks, siblings] = await Promise.all([
+    async #detalle(id, userId, known = {}) {
+        const [rows, movements, categories, siblings, session] = await Promise.all([
+            this.gastosRepository.getById(id),
             this.movementsRepository.getMovementsByGasto(id),
             this.categoriasRepository.getCategoriasByGasto(id),
-            row[0].financial_entity_id ? this.#editLocks(row[0], userId) : null,
-            this.gastosRepository.getSharedSibling(id),
+            known.siblings ?? this.gastosRepository.getSharedSibling(id),
+            known.session !== undefined || known.marked !== undefined
+                ? known.session
+                : this.getOpenSettlementSession(userId),
         ]);
+        const gasto = rows[0];
+        if (!gasto) return null;
+
+        let editLocks = null;
+        if (gasto.financial_entity_id) {
+            const marked =
+                known.marked ?? (session ? await this.settlementRepository.hasItem(session.id, id) : false);
+            editLocks = this.#computeEditLocks(gasto, { hasSibling: Boolean(siblings?.length), marked });
+        }
 
         const sibling = siblings?.[0];
-        row[0].movements = movements;
-        row[0].categories = categories;
-        row[0].edit_locks = editLocks;
-        row[0].shared_counterparty = sibling
+        gasto.movements = movements;
+        gasto.categories = categories;
+        gasto.edit_locks = editLocks;
+        gasto.shared_counterparty = sibling
             ? { user_id: sibling.counterparty_user_id, name: sibling.counterparty_name ?? null }
             : null;
-        return row[0];
+        return gasto;
     }
 
     #modoLabel(fixed, quotas) {
@@ -250,13 +273,15 @@ export class GastosService {
 
     async #levantarPostergacionParaPagar(gasto) {
         if (!gasto.is_postponed) return;
-        await this.gastosRepository.setPostponed(gasto.id, false);
-        await this.movementsRepository.createGastoLog(gasto.id, MovementType.UNPOSTPONED);
-        await this.#logEntidad(
-            gasto.financial_entity_id,
-            MovementType.UNPOSTPONED,
-            `Postergación quitada al registrar el pago: "${gasto.name}"`,
-        );
+        await Promise.all([
+            this.gastosRepository.setPostponed(gasto.id, false),
+            this.movementsRepository.createGastoLog(gasto.id, MovementType.UNPOSTPONED),
+            this.#logEntidad(
+                gasto.financial_entity_id,
+                MovementType.UNPOSTPONED,
+                `Postergación quitada al registrar el pago: "${gasto.name}"`,
+            ),
+        ]);
     }
 
     #modo(fixed, quotas) {
@@ -788,9 +813,10 @@ export class GastosService {
 
     async settleQuota(purchase_id, userId, { direct = false } = {}) {
         return this.tx(async () => {
-            const [rows, session] = await Promise.all([
+            const [rows, session, siblings] = await Promise.all([
                 this.#getOwnedWithOwner(purchase_id, userId),
                 direct ? null : this.getOpenSettlementSession(userId),
+                this.gastosRepository.getSharedSibling(purchase_id),
             ]);
             this.#assertCuotasLibres(rows[0]);
 
@@ -799,13 +825,17 @@ export class GastosService {
                     throw customError(ErrorCode.GASTO_POSTERGADO);
                 }
                 await this.settlementRepository.upsertItem(session.id, purchase_id);
-                return rows;
+                return await this.#detalle(purchase_id, userId, { siblings, marked: true });
             }
 
             await this.#levantarPostergacionParaPagar(rows[0]);
 
-            await this.effectSettlement(rows[0], userId);
-            return await this.gastosRepository.getById(purchase_id);
+            await this.#registrarPagoOPendiente(rows[0], userId, new Date(), siblings);
+            const [, detalle] = await Promise.all([
+                this.gastosRepository.clearFavoriteIfFinalized(purchase_id),
+                this.#detalle(purchase_id, userId, { siblings, session: direct ? undefined : null }),
+            ]);
+            return detalle;
         });
     }
 
@@ -886,10 +916,14 @@ export class GastosService {
                     paymentDate,
                     createdByUserId: userId,
                 });
-                notifications.push([sibling.counterparty_user_id, gasto.id]);
+                notifications.push([sibling.counterparty_user_id, gasto.id, sibling.sibling_id]);
             }
 
-            const inserted = (await this.movementsRepository.createGastoLogs(logs)) ?? [];
+            const [insertedRows, actorName] = await Promise.all([
+                this.movementsRepository.createGastoLogs(logs),
+                notifications.length ? this.#nombreDe(userId) : null,
+            ]);
+            const inserted = insertedRows ?? [];
             for (const row of inserted) {
                 const sibling = siblingById.get(String(row.purchase_id));
                 payments[row.purchase_id] = {
@@ -912,8 +946,8 @@ export class GastosService {
 
             await Promise.all([
                 this.gastosRepository.clearFavoritesIfFinalized(kept),
-                ...notifications.map(([counterparty, purchaseId]) =>
-                    triggerCompartidos(counterparty, PusherEvent.PAGO_PENDIENTE, { purchaseId }),
+                ...notifications.map(([counterparty, purchaseId, copyId]) =>
+                    triggerCompartidos(counterparty, PusherEvent.PAGO_PENDIENTE, { purchaseId, copyId, actorName }),
                 ),
             ]);
 
@@ -924,14 +958,8 @@ export class GastosService {
         });
     }
 
-    async effectSettlement(gasto, userId, paymentDate = new Date()) {
-        const result = await this.#registrarPagoOPendiente(gasto, userId, paymentDate);
-        await this.gastosRepository.clearFavoriteIfFinalized(gasto.id);
-        return result;
-    }
-
-    async #registrarPagoOPendiente(gasto, userId, paymentDate) {
-        const [sibling] = await this.gastosRepository.getSharedSibling(gasto.id);
+    async #registrarPagoOPendiente(gasto, userId, paymentDate, knownSiblings) {
+        const [sibling] = knownSiblings ?? (await this.gastosRepository.getSharedSibling(gasto.id));
 
         const esCompartido =
             sibling &&
@@ -952,11 +980,16 @@ export class GastosService {
 
             if (this.#cuotasCubiertas(gasto)) return { pending: true, skipped: true };
 
-            await this.movementsRepository.createGastoLog(
-                gasto.id, MovementType.PENDING_PAYMENT, gasto.amount_per_quota, paymentDate, userId,
-            );
+            const [, actorName] = await Promise.all([
+                this.movementsRepository.createGastoLog(
+                    gasto.id, MovementType.PENDING_PAYMENT, gasto.amount_per_quota, paymentDate, userId,
+                ),
+                this.#nombreDe(userId),
+            ]);
             await triggerCompartidos(sibling.counterparty_user_id, PusherEvent.PAGO_PENDIENTE, {
                 purchaseId: gasto.id,
+                copyId: sibling.sibling_id,
+                actorName,
             });
             return { pending: true };
         }

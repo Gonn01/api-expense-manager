@@ -1,5 +1,6 @@
 import express from "express";
 import authRoutes from "./auth.route.js";
+import healthRoutes from "./health.route.js";
 import userRoutes from "./user.route.js";
 import entidadesFinancierasRoutes from "./entidades_financieras.route.js";
 import dashboardRoutes from "./dashboard.route.js"
@@ -11,6 +12,7 @@ import { verifyToken } from "../middleware/verify_token.js";
 
 const router = express.Router();
 
+router.use("/health", healthRoutes);
 router.use("/auth", authRoutes);
 router.use(verifyToken);
 router.use("/user", userRoutes);

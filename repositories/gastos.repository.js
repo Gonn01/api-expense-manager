@@ -410,7 +410,7 @@ export class GastosRepository {
     );
   }
 
-  async getApprovalNotificationData(copyId) {
+  async getCopyNotificationData(copyId) {
     return await executeQuery(
       `SELECT
           fe_sender.user_id AS sender_user_id,
@@ -549,6 +549,7 @@ export class GastosRepository {
              m.created_at,
              m.purchase_id,
              m.created_by_user_id,
+             sib.id AS sibling_purchase_id,
              p.name AS gasto_name,
              p.currency_type,
              p.number_of_quotas,

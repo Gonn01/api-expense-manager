@@ -183,13 +183,13 @@ describe("GastosController", () => {
         it("responde con el resultado del pago de cuota", async () => {
             const req = makeReq({ params: { id: "10" } });
             const res = makeRes();
-            const mockResult = [{ id: 10, payed_quotas: 1 }];
+            const mockResult = { id: 10, payed_quotas: 1, movements: [] };
             service.settleQuota.mockResolvedValue(mockResult);
 
             await controller.settleQuota(req, res);
 
             expect(service.settleQuota).toHaveBeenCalledWith("10", 1, { direct: false });
-            expect(res.json).toHaveBeenCalledWith({ message: "Cuota pagada con éxito", data: mockResult[0] });
+            expect(res.json).toHaveBeenCalledWith({ message: "Cuota pagada con éxito", data: mockResult });
         });
 
         it("responde 500 cuando el servicio lanza un error", async () => {

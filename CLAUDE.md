@@ -64,7 +64,7 @@ repositories/gastos.repository.js → raw SQL via executeQuery from db.js
 
 There is no DI container/framework — factories instantiate everything by hand. When adding a resource, replicate this four-file structure rather than deviating from it.
 
-**Routing** (`routes/index.js`, mounted at `/api` in `index.js`): `/api/auth/*` is public; `verifyToken` middleware gates everything else. Resource groups: `/user`, `/entidades-financieras` (accounts/cards), `/dashboard`, `/gastos` (expenses — the core resource), `/categorias`, `/compartidos` (shared expenses between users), `/settlement` ("hacer cuentas" settlement sessions and their snapshots).
+**Routing** (`routes/index.js`, mounted at `/api` in `index.js`): `/api/auth/*` and `/api/health` (DB ping: 200 or 503) are public; `verifyToken` middleware gates everything else. Resource groups: `/user`, `/entidades-financieras` (accounts/cards), `/dashboard`, `/gastos` (expenses — the core resource), `/categorias`, `/compartidos` (shared expenses between users), `/settlement` ("hacer cuentas" settlement sessions and their snapshots).
 
 **Auth**: JWT via `middleware/verify_token.js` — verifies `Authorization: Bearer <jwt>` with `JWT_SECRET`, sets `req.session` (decoded payload, at least `userId`), 401 if the token is missing, invalid or expired (the signal both clients use to log the user out). 403 is reserved for an authenticated user without permission on the resource (`NO_AUTORIZADO`).
 

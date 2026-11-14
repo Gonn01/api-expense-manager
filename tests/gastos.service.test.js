@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../utils/pusher.js", () => ({ triggerCompartidos: vi.fn() }));
 
 import { GastosService } from "../services/gastos.service.js";
+import { triggerCompartidos } from "../utils/pusher.js";
 
 const OWNER = 1;
 const INTRUSO = 2;
@@ -62,6 +63,7 @@ describe("GastosService", () => {
             clearFavoriteIfFinalized: vi.fn(),
             clearFavoritesIfFinalized: vi.fn(),
             lockPurchases: vi.fn(),
+            getUserName: vi.fn(async () => [{ name: "Ana" }]),
         };
         movementsRepository = {
             getMovementsByGasto: vi.fn(async () => [
@@ -274,6 +276,31 @@ describe("GastosService", () => {
         });
     });
 
+    describe("settleQuota: respuesta", () => {
+        it("pago directo: devuelve el detalle completo sin volver a pedir el hermano compartido", async () => {
+            const detalle = await service.settleQuota(10, OWNER, { direct: true });
+
+            expect(detalle).toMatchObject({
+                id: 10,
+                movements: [expect.objectContaining({ id: 500 })],
+                categories: [],
+                shared_counterparty: null,
+                edit_locks: expect.any(Object),
+            });
+            expect(gastosRepository.getSharedSibling).toHaveBeenCalledTimes(1);
+            expect(gastosRepository.clearFavoriteIfFinalized).toHaveBeenCalledWith(10);
+        });
+
+        it("con sesión abierta: devuelve el detalle con el bloqueo de gasto marcado", async () => {
+            settlementRepository.getOpenSession.mockResolvedValue({ id: 5 });
+
+            const detalle = await service.settleQuota(10, OWNER);
+
+            expect(detalle.edit_locks.amount).toMatch(/marcado en la sesión/);
+            expect(settlementRepository.hasItem).not.toHaveBeenCalled();
+        });
+    });
+
     describe("effectSettlementBatch", () => {
         const PAGO = expect.objectContaining({ gastoId: 10, movementType: "PAYMENT", amount: 100 });
 
@@ -314,6 +341,11 @@ describe("GastosService", () => {
             expect(movementsRepository.createGastoLogs).toHaveBeenCalledWith([
                 expect.objectContaining({ gastoId: 10, movementType: "PENDING_PAYMENT", createdByUserId: OWNER }),
             ]);
+            expect(triggerCompartidos).toHaveBeenCalledWith(INTRUSO, "pago.pendiente", {
+                purchaseId: 10,
+                copyId: 20,
+                actorName: "Ana",
+            });
         });
 
         it("un compartido con todas las cuotas cubiertas sale del resumen sin sumar otro pendiente", async () => {

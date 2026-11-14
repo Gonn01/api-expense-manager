@@ -118,7 +118,7 @@ export class CompartidosService {
 
             const [[updated], notifRows] = await Promise.all([
                 this.gastosRepository.aprobarGasto(gastoId, entityId),
-                this.gastosRepository.getApprovalNotificationData(gastoId),
+                this.gastosRepository.getCopyNotificationData(gastoId),
             ]);
 
             const notif = notifRows[0];
@@ -159,14 +159,17 @@ export class CompartidosService {
             if (String(gasto.receiver_user_id) !== String(userId)) throw customError(ErrorCode.NO_AUTORIZADO);
             if (gasto.status !== ExpenseStatus.PENDING_APPROVAL) throw customError(ErrorCode.GASTO_NO_PENDIENTE_APROBACION);
 
-            const [[updated], senderRows] = await Promise.all([
-                this.gastosRepository.updateStatus(gastoId, ExpenseStatus.REJECTED),
-                this.gastosRepository.getEntityOwnerByPurchaseId(gasto.shared_from_id),
-            ]);
+            const [notif] = await this.gastosRepository.getCopyNotificationData(gastoId);
 
-            await Promise.all([
+            const [[updated]] = await Promise.all([
+                this.gastosRepository.updateStatus(gastoId, ExpenseStatus.REJECTED),
                 this.gastosRepository.updateStatus(gasto.shared_from_id, ExpenseStatus.REJECTED),
-                senderRows.length && triggerCompartidos(senderRows[0].user_id, PusherEvent.COMPARTIDO_RECHAZADO, { gastoId }),
+                notif && triggerCompartidos(notif.sender_user_id, PusherEvent.COMPARTIDO_RECHAZADO, {
+                    gastoId,
+                    entityId: notif.sender_entity_id,
+                    receiverName: notif.receiver_name,
+                    gastoName: notif.gasto_name,
+                }),
             ]);
 
             return updated;

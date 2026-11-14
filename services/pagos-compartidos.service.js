@@ -16,12 +16,26 @@ export class PagosCompartidosService {
         return actor?.name ?? null;
     }
 
-    async #notificar(userId, event, purchaseId, actorUserId) {
+    async #notificar(userId, event, purchaseId, actorUserId, known = {}) {
         if (userId == null) return;
         await triggerCompartidos(userId, event, {
             purchaseId,
-            actorName: await this.#actorName(actorUserId),
+            actorName: known.actorName !== undefined ? known.actorName : await this.#actorName(actorUserId),
         });
+    }
+
+    async #getOpenSession(userId) {
+        if (!this.settlementRepository) return null;
+        return await this.settlementRepository.getOpenSession(userId);
+    }
+
+    async #inicioRespuesta(movementId, userId) {
+        const [pend, actorName, session] = await Promise.all([
+            this.#getPendiente(movementId),
+            this.#actorName(userId),
+            this.#getOpenSession(userId),
+        ]);
+        return { pend, actorName, session };
     }
 
     async #assertContraparteDelPendiente(pend, userId) {
@@ -41,8 +55,7 @@ export class PagosCompartidosService {
         return pend;
     }
 
-    async #registrarPagoEnCopia(copiaId, pend) {
-        const [copia] = await this.gastosRepository.getById(copiaId);
+    async #registrarPagoEnCopia(copia, pend) {
         if (!copia) return null;
 
         const yaSaldada =
@@ -50,7 +63,7 @@ export class PagosCompartidosService {
         if (yaSaldada) return null;
 
         const [mirror] = await this.movementsRepository.createGastoLog(
-            copiaId,
+            copia.id,
             MovementType.PAYMENT,
             copia.amount_per_quota,
             pend.payment_date,
@@ -60,40 +73,42 @@ export class PagosCompartidosService {
         return mirror ?? null;
     }
 
-    async #confirmarPendiente(pend, copiaId) {
-        const [confirmed] = await this.movementsRepository.confirmPendingPayment(pend.id);
+    async #confirmarPendiente(pend, copiaId, alCerrar = []) {
+        const [[confirmed], [copia]] = await Promise.all([
+            this.movementsRepository.confirmPendingPayment(pend.id),
+            this.gastosRepository.getById(copiaId),
+        ]);
         if (!confirmed) throw customError(ErrorCode.PAGO_PENDIENTE_NOT_FOUND);
 
-        const mirror = await this.#registrarPagoEnCopia(copiaId, pend);
-        if (mirror) {
-            await Promise.all([
-                this.movementsRepository.setPairedMovement(pend.id, mirror.id),
-                this.movementsRepository.setPairedMovement(mirror.id, pend.id),
-            ]);
-        }
+        const mirror = await this.#registrarPagoEnCopia(copia, pend);
 
         await Promise.all([
+            mirror && this.movementsRepository.setPairedMovement(pend.id, mirror.id),
+            mirror && this.movementsRepository.setPairedMovement(mirror.id, pend.id),
             this.gastosRepository.clearFavoriteIfFinalized(pend.purchase_id),
             this.gastosRepository.clearFavoriteIfFinalized(copiaId),
+            ...alCerrar.map((run) => run()),
         ]);
         return { confirmed, mirror };
     }
 
-    async #desmarcarDeSesion(userId, purchaseId) {
-        if (!this.settlementRepository) return;
-        const session = await this.settlementRepository.getOpenSession(userId);
-        if (session) await this.settlementRepository.removeItem(session.id, purchaseId);
+    #desmarcarDeSesion(session, purchaseId) {
+        if (!session) return null;
+        return this.settlementRepository.removeItem(session.id, purchaseId);
     }
 
     async confirmar(movementId, userId) {
         return this.tx(async () => {
-            const pend = await this.#getPendiente(movementId);
+            const { pend, actorName, session } = await this.#inicioRespuesta(movementId, userId);
             const sibling = await this.#assertContraparteDelPendiente(pend, userId);
             await this.gastosRepository.lockPurchases([pend.purchase_id, sibling.sibling_id]);
 
-            const { confirmed } = await this.#confirmarPendiente(pend, sibling.sibling_id);
-            await this.#desmarcarDeSesion(userId, sibling.sibling_id);
-            await this.#notificar(pend.created_by_user_id, PusherEvent.PAGO_CONFIRMADO, pend.purchase_id, userId);
+            const { confirmed } = await this.#confirmarPendiente(pend, sibling.sibling_id, [
+                () => this.#desmarcarDeSesion(session, sibling.sibling_id),
+            ]);
+            await this.#notificar(pend.created_by_user_id, PusherEvent.PAGO_CONFIRMADO, pend.purchase_id, userId, {
+                actorName,
+            });
             return confirmed;
         });
     }
@@ -106,18 +121,19 @@ export class PagosCompartidosService {
 
     async rechazar(movementId, userId) {
         return this.tx(async () => {
-            const pend = await this.#getPendiente(movementId);
+            const { pend, actorName, session } = await this.#inicioRespuesta(movementId, userId);
             const sibling = await this.#assertContraparteDelPendiente(pend, userId);
             await this.gastosRepository.lockPurchases([pend.purchase_id, sibling.sibling_id]);
 
-            const [rejected] = await this.movementsRepository.closePendingPayment(
-                pend.id,
-                MovementType.PAYMENT_REJECTED,
-            );
+            const [[rejected]] = await Promise.all([
+                this.movementsRepository.closePendingPayment(pend.id, MovementType.PAYMENT_REJECTED),
+                this.#desmarcarDeSesion(session, sibling.sibling_id),
+            ]);
             if (!rejected) throw customError(ErrorCode.PAGO_PENDIENTE_NOT_FOUND);
 
-            await this.#desmarcarDeSesion(userId, sibling.sibling_id);
-            await this.#notificar(pend.created_by_user_id, PusherEvent.PAGO_RECHAZADO, pend.purchase_id, userId);
+            await this.#notificar(pend.created_by_user_id, PusherEvent.PAGO_RECHAZADO, pend.purchase_id, userId, {
+                actorName,
+            });
             return rejected;
         });
     }

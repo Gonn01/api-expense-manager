@@ -162,7 +162,7 @@ export class GastosController {
 
             res.json({
                 message: "Cuota pagada con éxito",
-                data: updated[0]
+                data: updated
             });
         } catch (err) {
             return handleError(res, err);

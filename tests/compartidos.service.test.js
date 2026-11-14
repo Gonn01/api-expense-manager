@@ -22,7 +22,7 @@ describe("CompartidosService.aprobar: vínculo con el emisor", () => {
             getById: vi.fn(async () => [GASTO]),
             getEntityOwnerByPurchaseId: vi.fn(async () => [{ user_id: EMISOR }]),
             aprobarGasto: vi.fn(async () => [{ ...GASTO, financial_entity_id: 7 }]),
-            getApprovalNotificationData: vi.fn(async () => []),
+            getCopyNotificationData: vi.fn(async () => []),
             updateStatus: vi.fn(),
             getUserName: vi.fn(async () => [{ name: "Juan" }]),
         };
@@ -71,5 +71,52 @@ describe("CompartidosService.aprobar: vínculo con el emisor", () => {
 
         expect(entidadesFinancierasRepository.vincularUsuario).toHaveBeenCalledTimes(1);
         expect(entidadesFinancierasRepository.vincularUsuario).toHaveBeenCalledWith(9, RECEPTOR, EMISOR);
+    });
+});
+
+describe("CompartidosService.rechazar", () => {
+    let gastosRepository;
+    let service;
+
+    beforeEach(async () => {
+        const { triggerCompartidos } = await import("../utils/pusher.js");
+        triggerCompartidos.mockClear();
+        gastosRepository = {
+            getById: vi.fn(async () => [GASTO]),
+            getCopyNotificationData: vi.fn(async () => [
+                { sender_user_id: EMISOR, sender_entity_id: 5, receiver_name: "Ana", gasto_name: "Cena" },
+            ]),
+            updateStatus: vi.fn(async (id, status) => [{ id, status }]),
+        };
+        service = new CompartidosService({
+            gastosRepository,
+            entidadesFinancierasRepository: {},
+            movementsRepository: {},
+            runInTransaction: (fn) => fn(),
+        });
+    });
+
+    it("rechaza las dos copias y le avisa al emisor quién rechazó qué gasto", async () => {
+        const { triggerCompartidos } = await import("../utils/pusher.js");
+
+        const updated = await service.rechazar(GASTO.id, RECEPTOR);
+
+        expect(updated).toEqual({ id: GASTO.id, status: "REJECTED" });
+        expect(gastosRepository.updateStatus).toHaveBeenCalledWith(GASTO.shared_from_id, "REJECTED");
+        expect(triggerCompartidos).toHaveBeenCalledWith(EMISOR, "compartido.rechazado", {
+            gastoId: GASTO.id,
+            entityId: 5,
+            receiverName: "Ana",
+            gastoName: "Cena",
+        });
+    });
+
+    it("no notifica si el gasto original ya no existe", async () => {
+        const { triggerCompartidos } = await import("../utils/pusher.js");
+        gastosRepository.getCopyNotificationData.mockResolvedValue([]);
+
+        await service.rechazar(GASTO.id, RECEPTOR);
+
+        expect(triggerCompartidos).not.toHaveBeenCalled();
     });
 });
