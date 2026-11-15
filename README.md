@@ -51,13 +51,7 @@ PUSHER_CLUSTER=sa1
 
 ## Base de datos
 
-El repo no usa ORM ni herramienta de migraciones, y **el esquema completo de PostgreSQL no está versionado acá**: se administra fuera del repo. Para levantar una base nueva hace falta partir del esquema existente (por ejemplo, un dump sin datos de la base de desarrollo).
-
-Los cambios de esquema posteriores están en [migrations/manual/](migrations/manual/), como archivos `<fecha>_<motivo>.sql` que se ejecutan a mano, en orden de fecha, antes de desplegar el código que los necesita:
-
-```bash
-psql "$DATABASE_URL" -f migrations/manual/2026-09-03_add_detail_purchases_movements.sql
-```
+La API se conecta a la base PostgreSQL indicada en `DATABASE_URL`, que debe tener el esquema de la aplicación.
 
 Para cargar datos de prueba:
 
@@ -66,8 +60,6 @@ node seed.js
 ```
 
 > `seed.js` **vacía las tablas** antes de cargar datos falsos. No correrlo nunca contra producción.
-
-`migrate.js` no es un migrador de esquema: es un script puntual que importa el `data.json` de una aplicación anterior.
 
 ## Correr el proyecto en local
 
