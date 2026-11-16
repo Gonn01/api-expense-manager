@@ -33,9 +33,6 @@ export async function ensureGastosSchema() {
     ["purchases.is_favorite", `
       ALTER TABLE purchases ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN NOT NULL DEFAULT false
     `],
-    ["purchases.deleted_with_entity", `
-      ALTER TABLE purchases ADD COLUMN IF NOT EXISTS deleted_with_entity BOOLEAN NOT NULL DEFAULT false
-    `],
     ["financial_entities.is_favorite", `
       ALTER TABLE financial_entities ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN NOT NULL DEFAULT false
     `],
