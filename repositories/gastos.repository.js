@@ -661,7 +661,7 @@ export class GastosRepository {
        JOIN purchases copy ON copy.shared_from_id = p.id AND copy.deleted = false
        LEFT JOIN financial_entities fe_copy ON fe_copy.id = copy.financial_entity_id
        JOIN users u_receiver ON u_receiver.id = copy.receiver_user_id
-       WHERE p.deleted = false AND p.status = 'ACTIVE'
+       WHERE p.deleted = false AND p.status IN ('PENDING_APPROVAL', 'REJECTED')
          AND copy.status IN ('PENDING_APPROVAL', 'REJECTED')
        ORDER BY p.created_at DESC`,
       [userId]
