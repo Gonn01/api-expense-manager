@@ -64,6 +64,23 @@ describe("CompartidosService.aprobar: vínculo con el emisor", () => {
         expect(entidadesFinancierasRepository.vincularUsuario).not.toHaveBeenCalled();
     });
 
+    it("al aprobar no escribe otro CREATION en el historial del gasto", async () => {
+        await service.aprobar(GASTO.id, RECEPTOR, 7, null);
+
+        expect(movementsRepository.createGastoLog).not.toHaveBeenCalledWith(expect.anything(), "CREATION");
+    });
+
+    it("al aprobar registra PURCHASE_CREATED en la entidad del receptor y activa el original", async () => {
+        await service.aprobar(GASTO.id, RECEPTOR, 7, null);
+
+        expect(movementsRepository.createEntidadLog).toHaveBeenCalledWith(
+            7,
+            "PURCHASE_CREATED",
+            expect.stringContaining(GASTO.name),
+        );
+        expect(gastosRepository.updateStatus).toHaveBeenCalledWith(GASTO.shared_from_id, "ACTIVE");
+    });
+
     it("vincula la entidad nueva una sola vez", async () => {
         entidadesFinancierasRepository.getById.mockResolvedValue([{ id: 9, user_id: RECEPTOR, linked_user_id: EMISOR }]);
 

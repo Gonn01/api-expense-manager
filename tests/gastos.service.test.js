@@ -560,6 +560,25 @@ describe("GastosService", () => {
             expect(logs[1]).toMatchObject({ gastoId: 10, amount: 100 });
         });
 
+        it("al compartir, escribe un solo CREATION en la copia del receptor", async () => {
+            entidadesFinancierasRepository.getById.mockResolvedValue([{ id: 7, user_id: OWNER, linked_user_id: INTRUSO }]);
+            gastosRepository.create = vi.fn(async (data) => [{ id: data.shared_from_id ? 11 : 10, ...data }]);
+
+            await crear();
+
+            expect(gastosRepository.create).toHaveBeenCalledWith(
+                expect.objectContaining({ shared_from_id: 10, receiver_user_id: INTRUSO, status: "PENDING_APPROVAL" }),
+            );
+            const creationsDeLaCopia = movementsRepository.createGastoLog.mock.calls.filter(
+                ([gastoId, type]) => gastoId === 11 && type === "CREATION",
+            );
+            expect(creationsDeLaCopia).toHaveLength(1);
+            const [logsDelOriginal] = movementsRepository.createGastoLogs.mock.calls[0];
+            expect(logsDelOriginal.filter((l) => l.movementType === "CREATION")).toEqual([
+                expect.objectContaining({ gastoId: 10 }),
+            ]);
+        });
+
         it("devuelve las cuotas pagas reales del gasto creado", async () => {
             const [creado] = await crear({ payed_quotas: 2 });
 
