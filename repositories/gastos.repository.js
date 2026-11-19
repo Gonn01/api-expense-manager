@@ -212,15 +212,6 @@ export class GastosRepository {
     return rows[0]?.count ?? 0;
   }
 
-  async settleQuota(id) {
-    return await executeQuery(
-      `SELECT p.*, ${CALCULATED_FIELDS}
-       FROM purchases p
-       WHERE p.id = $1 AND p.deleted = false`,
-      [id]
-    );
-  }
-
   async settleQuotasLote(ids) {
     const updated = [];
     for (const id of ids) {
