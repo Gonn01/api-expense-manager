@@ -166,7 +166,13 @@ export class SettlementRepository {
         return await executeQuery(
             `SELECT s.id, s.month, s.started_at, s.finished_at, s.totals, s.created_at,
                     (SELECT COUNT(*)
-                     FROM jsonb_array_elements(s.items::jsonb) it
+                     FROM jsonb_array_elements(
+                         CASE jsonb_typeof(s.items)
+                             WHEN 'array' THEN s.items
+                             WHEN 'string' THEN (s.items #>> '{}')::jsonb
+                             ELSE '[]'::jsonb
+                         END
+                     ) it
                      JOIN purchases_movements m ON m.id = (it->>'movement_id')::int
                      WHERE (it->>'shared')::boolean IS TRUE
                        AND m.movement_type = 'PENDING_PAYMENT')::int AS pending_count

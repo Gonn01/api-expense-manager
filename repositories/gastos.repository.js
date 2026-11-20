@@ -581,6 +581,12 @@ export class GastosRepository {
              p.number_of_quotas,
              (SELECT COUNT(*) FROM purchases_movements pm
                WHERE pm.purchase_id = p.id AND pm.movement_type = 'PAYMENT')::int AS payed_quotas,
+             ((SELECT COUNT(*) FROM purchases_movements pm
+                WHERE pm.purchase_id = p.id AND pm.movement_type = 'PAYMENT')
+              + (SELECT COUNT(*) FROM purchases_movements pp
+                  WHERE pp.purchase_id = m.purchase_id
+                    AND pp.movement_type = 'PENDING_PAYMENT'
+                    AND (pp.created_at, pp.id) <= (m.created_at, m.id)))::int AS quota_number,
              CASE WHEN p.shared_from_id IS NULL THEN sib.receiver_user_id
                   ELSE fe.user_id END AS counterparty_user_id
           FROM purchases_movements m
