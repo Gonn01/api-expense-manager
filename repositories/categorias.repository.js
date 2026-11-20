@@ -33,7 +33,7 @@ export class CategoriasRepository {
     async addCategoriasToNewGasto(gastoId, categoryIds) {
         if (!categoryIds?.length) return [];
 
-        const values = categoryIds.map((_, i) => `($1, ${i + 2}, NOW())`).join(", ");
+        const values = categoryIds.map((_, i) => `($1, $${i + 2}, NOW())`).join(", ");
         return await executeQuery(
             `WITH inserted AS (
                 INSERT INTO purchases_categories (purchase_id, category_id, created_at)
