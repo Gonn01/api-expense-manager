@@ -247,11 +247,11 @@ export class PagosCompartidosService {
             this.#assertPuedeResponder(pago, userId);
             await this.gastosRepository.lockPurchases([pago.purchase_id, sibling.sibling_id]);
 
-            const deleted = await this.movementsRepository.deletePaymentsByIds(this.#idsDelPar(pago));
-            if (!deleted.length) throw customError(ErrorCode.PAGO_NOT_FOUND);
+            const reverted = await this.movementsRepository.revertPaymentsByIds(this.#idsDelPar(pago));
+            if (!reverted.length) throw customError(ErrorCode.PAGO_NOT_FOUND);
 
             const fecha = new Date();
-            for (const row of deleted) {
+            for (const row of reverted) {
                 await this.movementsRepository.createGastoLog(
                     row.purchase_id,
                     MovementType.REFUND,
@@ -268,7 +268,7 @@ export class PagosCompartidosService {
                 pago.purchase_id,
                 userId,
             );
-            return deleted;
+            return reverted;
         });
     }
 

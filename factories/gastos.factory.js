@@ -4,6 +4,7 @@ import { MovementsRepository } from "../repositories/movements.repository.js";
 import { EntidadesFinancierasRepository } from "../repositories/entidades-financieras.repository.js";
 import { CategoriasRepository } from "../repositories/categorias.repository.js";
 import { SettlementRepository } from "../repositories/settlement.repository.js";
+import { EdicionesCompartidasRepository } from "../repositories/ediciones-compartidas.repository.js";
 import { GastosService } from "../services/gastos.service.js";
 import { PagosCompartidosService } from "../services/pagos-compartidos.service.js";
 
@@ -27,6 +28,7 @@ export function makeGastosController() {
         categoriasRepository,
         settlementRepository,
         pagosCompartidosService,
+        edicionesRepository: new EdicionesCompartidasRepository(),
     });
 
     const gastosController = new GastosController(gastosService);

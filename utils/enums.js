@@ -21,6 +21,10 @@ export const MovementType = Object.freeze({
     SHARED_APPROVED: 'SHARED_APPROVED',
     SHARED_REJECTED: 'SHARED_REJECTED',
     SHARED_RETRIED: 'SHARED_RETRIED',
+    EDIT_REQUESTED: 'EDIT_REQUESTED',
+    EDIT_APPROVED: 'EDIT_APPROVED',
+    EDIT_REJECTED: 'EDIT_REJECTED',
+    EDIT_CANCELLED: 'EDIT_CANCELLED',
 });
 
 export const Currency = Object.freeze({
@@ -56,4 +60,8 @@ export const PusherEvent = Object.freeze({
     PAGO_REVERSION_CANCELADA:  'pago.reversion_cancelada',
     PAGO_REVERSION_ACEPTADA:   'pago.reversion_aceptada',
     PAGO_REVERSION_RECHAZADA:  'pago.reversion_rechazada',
+    EDICION_SOLICITADA:        'edicion.solicitada',
+    EDICION_APROBADA:          'edicion.aprobada',
+    EDICION_RECHAZADA:         'edicion.rechazada',
+    EDICION_CANCELADA:         'edicion.cancelada',
 });

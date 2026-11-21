@@ -51,6 +51,8 @@ function paymentStatus(item, movement) {
             return "rechazado";
         case MovementType.PAYMENT_WITHDRAWN:
             return "retirado";
+        case MovementType.PAYMENT_REVERTED:
+            return "revertido";
         case MovementType.PAYMENT:
             if (movement.reversal_requested_by_user_id != null) return "reversion_pendiente";
             return item.shared ? "aprobado" : "pagado";

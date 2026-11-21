@@ -11,6 +11,7 @@ export class CompartidosService {
         movementsRepository,
         pagosCompartidosService,
         settlementRepository,
+        edicionesCompartidasService,
         runInTransaction = withTransaction,
     }) {
         this.gastosRepository = gastosRepository;
@@ -18,15 +19,17 @@ export class CompartidosService {
         this.movementsRepository = movementsRepository;
         this.pagosCompartidosService = pagosCompartidosService;
         this.settlementRepository = settlementRepository;
+        this.edicionesCompartidasService = edicionesCompartidasService;
         this.tx = runInTransaction;
     }
 
     async getCompartidos(userId) {
-        const [recibidos, emitidos, pagosRows, reversionesRows] = await Promise.all([
+        const [recibidos, emitidos, pagosRows, reversionesRows, ediciones] = await Promise.all([
             this.gastosRepository.getCompartidosRecibidos(userId),
             this.gastosRepository.getCompartidosEmitidos(userId),
             this.gastosRepository.getPagosCompartidos(userId),
             this.gastosRepository.getReversionesCompartidas(userId),
+            this.edicionesCompartidasService?.listar(userId) ?? { porConfirmar: [], esperando: [] },
         ]);
 
         const pagos = { porConfirmar: [], esperando: [] };
@@ -41,7 +44,23 @@ export class CompartidosService {
             else reversiones.porConfirmar.push(r);
         }
 
-        return { recibidos, emitidos, pagos, reversiones };
+        return { recibidos, emitidos, pagos, reversiones, ediciones };
+    }
+
+    async solicitarEdicion(gastoId, userId, input) {
+        return this.edicionesCompartidasService.solicitar(gastoId, userId, input);
+    }
+
+    async aprobarEdicion(id, userId) {
+        return this.edicionesCompartidasService.aprobar(id, userId);
+    }
+
+    async rechazarEdicion(id, userId) {
+        return this.edicionesCompartidasService.rechazar(id, userId);
+    }
+
+    async cancelarEdicion(id, userId) {
+        return this.edicionesCompartidasService.cancelar(id, userId);
     }
 
     async confirmarPago(movementId, userId) {

@@ -147,6 +147,14 @@ export class GastosRepository {
   async getGastosByEntidad(entidadId) {
     return await executeQuery(
       `SELECT p.*, ${CALCULATED_FIELDS},
+          (SELECT COUNT(*)::int FROM purchases_movements sm
+           JOIN purchases sib ON sib.id = sm.purchase_id
+           WHERE sm.movement_type = 'PENDING_PAYMENT'
+             AND sib.deleted = false
+             AND sib.status = 'ACTIVE'
+             AND ((p.shared_from_id IS NULL AND sib.shared_from_id = p.id)
+               OR (p.shared_from_id IS NOT NULL AND sib.id = p.shared_from_id))
+          ) AS counterparty_pending_quotas,
           COALESCE(
             (SELECT json_agg(json_build_object('id', c.id, 'name', c.name, 'color', c.color))
              FROM purchases_categories pc

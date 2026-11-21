@@ -50,6 +50,9 @@ const CATALOG = Object.freeze({
     GASTO_CUOTAS_CUBIERTAS: { status: HttpStatus.CONFLICT, message: "Las cuotas que quedan ya tienen pagos esperando confirmación." },
     REVERSION_YA_SOLICITADA: { status: HttpStatus.CONFLICT, message: "Ya hay una solicitud de reversión pendiente para este pago." },
     REVERSION_NOT_FOUND: { status: HttpStatus.NOT_FOUND, message: "No hay una solicitud de reversión pendiente para este pago." },
+    EDICION_NOT_FOUND: { status: HttpStatus.NOT_FOUND, message: "No hay una solicitud de edición pendiente." },
+    EDICION_YA_SOLICITADA: { status: HttpStatus.CONFLICT, message: "Este gasto ya tiene una solicitud de edición pendiente." },
+    EDICION_SIN_CAMBIOS: { status: HttpStatus.BAD_REQUEST, message: "La solicitud no cambia ningún dato del gasto." },
 
     SETTLEMENT_REQUIRED: { status: HttpStatus.CONFLICT, message: 'Activá el modo "Hacer cuentas" para registrar pagos.' },
     NO_OPEN_SESSION: { status: HttpStatus.BAD_REQUEST, message: "No hay una sesión de cuentas abierta" },

@@ -1,6 +1,7 @@
 import { MovementType, ExpenseStatus, ExpenseType, Currency, PusherEvent } from "../utils/enums.js";
 import { triggerCompartidos } from "../utils/pusher.js";
 import { customError, ErrorCode } from "../utils/errors.js";
+import { computeEditLocks } from "../utils/gasto-edit-locks.js";
 import { logRed } from "../utils/logs_custom.js";
 import { withTransaction, bestEffort } from "../db.js";
 
@@ -16,8 +17,10 @@ export class GastosService {
         categoriasRepository,
         settlementRepository,
         pagosCompartidosService,
+        edicionesRepository,
         runInTransaction = withTransaction,
     }) {
+        this.edicionesRepository = edicionesRepository;
         this.gastosRepository = gastosRepository;
         this.movementsRepository = movementsRepository;
         this.entidadesFinancierasRepository = entidadesFinancierasRepository;
@@ -163,17 +166,36 @@ export class GastosService {
         const gasto = rows[0];
         if (!gasto) return null;
 
+        const sibling = siblings?.[0];
+        const [pendingEdit] =
+            sibling && this.edicionesRepository ? await this.edicionesRepository.getPendingByPurchase(id) : [];
+
         let editLocks = null;
+        let sharedEditLocks = null;
         if (gasto.financial_entity_id) {
             const marked =
                 known.marked ?? (session ? await this.settlementRepository.hasItem(session.id, id) : false);
             editLocks = this.#computeEditLocks(gasto, { hasSibling: Boolean(siblings?.length), marked });
+            if (sibling && gasto.status === ExpenseStatus.ACTIVE && !pendingEdit) {
+                sharedEditLocks = this.#computeEditLocks(gasto, { marked, ignoreShared: true });
+            }
         }
 
-        const sibling = siblings?.[0];
         gasto.movements = movements;
         gasto.categories = categories;
         gasto.edit_locks = editLocks;
+        gasto.shared_edit_locks = sharedEditLocks;
+        gasto.pending_edit_request = pendingEdit
+            ? {
+                  id: pendingEdit.id,
+                  requested_by_user_id: pendingEdit.requested_by_user_id,
+                  changes:
+                      typeof pendingEdit.changes === "string"
+                          ? JSON.parse(pendingEdit.changes)
+                          : pendingEdit.changes,
+                  created_at: pendingEdit.created_at,
+              }
+            : null;
         gasto.shared_counterparty = sibling
             ? { user_id: sibling.counterparty_user_id, name: sibling.counterparty_name ?? null }
             : null;
@@ -307,39 +329,8 @@ export class GastosService {
         return { hasSibling: Boolean(siblings?.length), marked };
     }
 
-    #computeEditLocks(gasto, { hasSibling, marked }) {
-        const paid = Number(gasto.payed_quotas) || 0;
-        const pending = Number(gasto.pending_quotas) || 0;
-        const quotas = Math.max(Number(gasto.number_of_quotas) || 0, 1);
-        const finalized = !gasto.fixed_expense && paid >= quotas;
-        const shared =
-            hasSibling ||
-            Boolean(gasto.shared_from_id) ||
-            this.#sinAceptar(gasto);
-
-        const locks = {};
-        const lock = (fields, reason) => {
-            for (const f of fields) if (!locks[f]) locks[f] = reason;
-        };
-        const estructura = ["amount", "currency_type", "type", "mode", "number_of_quotas", "financial_entity_id"];
-
-        lock(["payed_quotas"], "Los pagos se registran con Pagar y se deshacen con Revertir.");
-        if (finalized) {
-            lock(estructura, "El gasto está finalizado: solo se pueden cambiar el nombre y las categorías.");
-        }
-        if (shared) {
-            lock(estructura, "El gasto está compartido con otro usuario: el cambio no llegaría a su copia.");
-        }
-        if (marked) {
-            lock(
-                ["amount", "currency_type", "type"],
-                "El gasto está marcado en la sesión de cuentas abierta. Desmarcalo o terminá la sesión para cambiarlo.",
-            );
-        }
-        if (paid + pending > 0) {
-            lock(["currency_type", "type", "mode"], "El gasto ya tiene pagos registrados.");
-        }
-        return locks;
+    #computeEditLocks(gasto, context) {
+        return computeEditLocks(gasto, context);
     }
 
     async #editLocks(gasto, userId) {
@@ -510,15 +501,7 @@ export class GastosService {
                 }
             }
 
-            const [[updated], movements, categories] = await Promise.all([
-                this.gastosRepository.getById(id),
-                this.movementsRepository.getMovementsByGasto(id),
-                this.categoriasRepository.getCategoriasByGasto(id),
-            ]);
-            updated.movements = movements;
-            updated.categories = categories;
-            updated.edit_locks = this.#computeEditLocks(updated, lockContext);
-            return updated;
+            return await this.#detalle(id, userId, { marked: lockContext.marked });
         });
     }
 
@@ -547,6 +530,7 @@ export class GastosService {
             if (linkedId) {
                 if (delete_linked) {
                     await this.gastosRepository.delete(linkedId);
+                    await this.movementsRepository.createGastoLog(linkedId, MovementType.DELETE);
                     await this.#logEntidad(
                         current[0].linked_financial_entity_id,
                         MovementType.DELETE,
@@ -1032,9 +1016,9 @@ export class GastosService {
             return "solicitada";
         }
 
-        const [deleted] = await this.movementsRepository.deletePaymentsByIds([movement.id]);
-        if (!deleted) throw customError(ErrorCode.PAGO_NOT_FOUND);
-        await this.movementsRepository.createGastoLog(gasto.id, MovementType.REFUND, deleted.amount ?? null, new Date());
+        const [reverted] = await this.movementsRepository.revertPaymentsByIds([movement.id]);
+        if (!reverted) throw customError(ErrorCode.PAGO_NOT_FOUND);
+        await this.movementsRepository.createGastoLog(gasto.id, MovementType.REFUND, reverted.amount ?? null, new Date());
         return "revertido";
     }
 

@@ -72,8 +72,7 @@ describe("GastosService", () => {
             createGastoLog: vi.fn(),
             createGastoLogs: vi.fn(async (logs) => logs.map((l, i) => ({ id: 900 + i, purchase_id: l.gastoId, movement_type: l.movementType }))),
             createEntidadLog: vi.fn(),
-            deletePayments: vi.fn(),
-            deletePaymentsByIds: vi.fn(async (ids) => ids.map((id) => ({ id, amount: 100, purchase_id: 10 }))),
+            revertPaymentsByIds: vi.fn(async (ids) => ids.map((id) => ({ id, amount: 100, purchase_id: 10 }))),
             getPaymentById: vi.fn(async (id) => [{ id: Number(id), purchase_id: 10, movement_type: "PAYMENT", amount: 100 }]),
             getPendingPaymentsByPurchases: vi.fn(async () => []),
         };
@@ -129,7 +128,7 @@ describe("GastosService", () => {
                 expect(gastosRepository.setFavorite).not.toHaveBeenCalled();
                 expect(categoriasRepository.setCategoriasForGasto).not.toHaveBeenCalled();
                 expect(movementsRepository.createGastoLog).not.toHaveBeenCalled();
-                expect(movementsRepository.deletePaymentsByIds).not.toHaveBeenCalled();
+                expect(movementsRepository.revertPaymentsByIds).not.toHaveBeenCalled();
                 expect(settlementRepository.upsertItem).not.toHaveBeenCalled();
                 expect(settlementRepository.upsertItems).not.toHaveBeenCalled();
             });
@@ -505,11 +504,11 @@ describe("GastosService", () => {
     });
 
     describe("revertirPago", () => {
-        it("en un gasto no compartido elimina ese pago y registra el reembolso", async () => {
+        it("en un gasto no compartido marca ese pago como revertido y registra el reembolso", async () => {
             const { resultado } = await service.revertirPago(10, 500, OWNER);
 
             expect(resultado).toBe("revertido");
-            expect(movementsRepository.deletePaymentsByIds).toHaveBeenCalledWith([500]);
+            expect(movementsRepository.revertPaymentsByIds).toHaveBeenCalledWith([500]);
             expect(movementsRepository.createGastoLog).toHaveBeenCalledWith(10, "REFUND", 100, expect.any(Date));
         });
 
@@ -517,7 +516,7 @@ describe("GastosService", () => {
             movementsRepository.getPaymentById.mockResolvedValue([{ id: 500, purchase_id: 99, movement_type: "PAYMENT" }]);
 
             await expect(service.revertirPago(10, 500, OWNER)).rejects.toMatchObject({ code: "PAGO_NOT_FOUND" });
-            expect(movementsRepository.deletePaymentsByIds).not.toHaveBeenCalled();
+            expect(movementsRepository.revertPaymentsByIds).not.toHaveBeenCalled();
         });
 
         describe("en un gasto compartido", () => {
@@ -542,7 +541,7 @@ describe("GastosService", () => {
 
                 expect(resultado).toBe("solicitada");
                 expect(pagosCompartidosService.solicitarReversion).toHaveBeenCalledWith(500, OWNER);
-                expect(movementsRepository.deletePaymentsByIds).not.toHaveBeenCalled();
+                expect(movementsRepository.revertPaymentsByIds).not.toHaveBeenCalled();
             });
 
             it("revertir el último pago también pide la reversión", async () => {
@@ -827,7 +826,7 @@ describe("GastosService", () => {
             await service.update(10, OWNER, { name: "Otro", payed_quotas: 1 });
 
             expect(gastosRepository.update).toHaveBeenCalled();
-            expect(movementsRepository.deletePaymentsByIds).not.toHaveBeenCalled();
+            expect(movementsRepository.revertPaymentsByIds).not.toHaveBeenCalled();
         });
 
         describe("con pagos registrados", () => {
