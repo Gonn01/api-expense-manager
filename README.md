@@ -8,7 +8,7 @@ La API persiste los datos en PostgreSQL y hace cumplir todas las reglas de negoc
 
 - Registro, login con email/contraseña y login con Google; sesiones con JWT.
 - Entidades financieras (personas, tarjetas, bancos, comercios), con vinculación entre usuarios.
-- Gastos (egresos o ingresos) de pago único, en cuotas o fijos, en ARS, USD, EUR, BRL, CLP y UYU; pagos, cobros y reversión.
+- Gastos (egresos o ingresos) de pago único, en cuotas o fijos, en ARS y las 35 monedas extranjeras con cotización del BCRA (lista en `utils/enums.js`); pagos, cobros y reversión.
 - Categorías y dashboard con totales por moneda.
 - Gastos compartidos entre usuarios vinculados: aprobación de gastos y confirmación de pagos, con notificaciones en tiempo real por Pusher.
 - Modo "hacer cuentas": sesiones de cierre que registran los pagos marcados y guardan un snapshot inmutable.
@@ -53,14 +53,6 @@ PUSHER_CLUSTER=sa1
 
 La API se conecta a la base PostgreSQL indicada en `DATABASE_URL`, que debe tener el esquema de la aplicación.
 
-Para cargar datos de prueba:
-
-```bash
-node seed.js
-```
-
-> `seed.js` **vacía las tablas** antes de cargar datos falsos. No correrlo nunca contra producción.
-
 ## Correr el proyecto en local
 
 ```bash
@@ -86,10 +78,10 @@ Los orígenes permitidos por CORS están definidos en `index.js`; para consumir 
 | `npm test` | Tests unitarios con Vitest |
 | `npm run test:watch` | Tests en modo watch |
 | `npm run test:coverage` | Tests con reporte de cobertura |
+| `npm run test:integration` | Tests por HTTP contra un Postgres local temporal (requiere PostgreSQL instalado) |
 | `npx eslint .` | Lint |
-| `node seed.js` | Carga datos falsos (vacía las tablas antes) |
 
-Los tests son unitarios y no necesitan una base: los de controllers mockean los services y los de services mockean los repositories.
+Los tests de `npm test` son unitarios y no necesitan una base: los de controllers mockean los services y los de services mockean los repositories. Los de integración crean una base temporal desde `migrations/schema.sql`, nunca se conectan a una base remota y la eliminan al terminar.
 
 ## Arquitectura técnica
 
@@ -128,7 +120,6 @@ repositories/<recurso>.repository.js SQL plano con executeQuery (db.js)
 | [cors](https://github.com/expressjs/cors) | Política de CORS |
 | [dotenv](https://github.com/motdotla/dotenv) | Carga del `.env` |
 | [dayjs](https://day.js.org) | Fechas |
-| [@faker-js/faker](https://fakerjs.dev) | Datos falsos para `seed.js` |
 | [Vitest](https://vitest.dev) | Tests unitarios y cobertura |
 
 ## Autores

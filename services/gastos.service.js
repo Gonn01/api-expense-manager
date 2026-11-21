@@ -154,7 +154,7 @@ export class GastosService {
     }
 
     async #detalle(id, userId, known = {}) {
-        const [rows, movements, categories, siblings, session] = await Promise.all([
+        const [rows, movements, categories, siblings, session, sharedState] = await Promise.all([
             this.gastosRepository.getById(id),
             this.movementsRepository.getMovementsByGasto(id),
             this.categoriasRepository.getCategoriasByGasto(id),
@@ -162,6 +162,7 @@ export class GastosService {
             known.session !== undefined || known.marked !== undefined
                 ? known.session
                 : this.getOpenSettlementSession(userId),
+            this.gastosRepository.getSharedState(id),
         ]);
         const gasto = rows[0];
         if (!gasto) return null;
@@ -199,7 +200,27 @@ export class GastosService {
         gasto.shared_counterparty = sibling
             ? { user_id: sibling.counterparty_user_id, name: sibling.counterparty_name ?? null }
             : null;
+        Object.assign(gasto, await this.#datosParaCompartir(gasto, userId, sharedState?.[0]));
         return gasto;
+    }
+
+    async #datosParaCompartir(gasto, userId, estado) {
+        const was_shared = Boolean(estado?.was_shared);
+        const datos = {
+            was_shared,
+            shared_partner_name: estado?.sibling_id ? (estado.counterparty_name ?? null) : null,
+            can_share: false,
+            share_target_name: null,
+        };
+        if (was_shared || gasto.status !== ExpenseStatus.ACTIVE || !gasto.financial_entity_id) return datos;
+
+        const [entidad] = await this.entidadesFinancierasRepository.getById(gasto.financial_entity_id, userId);
+        if (!entidad?.linked_user_id) return datos;
+        return {
+            ...datos,
+            can_share: true,
+            share_target_name: entidad.linked_user_name ?? entidad.linked_user_email ?? null,
+        };
     }
 
     #modoLabel(fixed, quotas) {
@@ -511,7 +532,10 @@ export class GastosService {
             const linkedId = current[0].linked_purchase_id;
 
             if (this.pagosCompartidosService) {
-                await this.pagosCompartidosService.rechazarPendientesDeContraparte(id, userId);
+                await this.pagosCompartidosService.cerrarCompartido(id, userId);
+                if (linkedId && delete_linked) {
+                    await this.pagosCompartidosService.cerrarCompartido(linkedId, userId);
+                }
             }
 
             const row = await this.gastosRepository.delete(id);
@@ -552,6 +576,9 @@ export class GastosService {
 
             await this.#assertOwner(gasto, userId);
 
+            const [estado] = await this.gastosRepository.getSharedState(id);
+            if (estado?.was_shared) throw customError(ErrorCode.GASTO_COMPARTIDO_NO_RESTAURABLE);
+
             const [restored] = await this.gastosRepository.restore(id);
             if (!restored) throw customError(ErrorCode.GASTO_NOT_FOUND);
 
@@ -564,6 +591,77 @@ export class GastosService {
 
             return await this.getById(id, userId);
         });
+    }
+
+    async compartir(id, userId) {
+        return this.tx(async () => {
+            await this.#getOwnedWithOwner(id, userId);
+            await this.gastosRepository.lockPurchases([id]);
+
+            const [[gasto], [estado], session] = await Promise.all([
+                this.gastosRepository.getById(id),
+                this.gastosRepository.getSharedState(id),
+                this.getOpenSettlementSession(userId),
+            ]);
+            if (!gasto) throw customError(ErrorCode.GASTO_NOT_FOUND);
+
+            const [entidad] = await this.entidadesFinancierasRepository.getById(gasto.financial_entity_id, userId);
+            if (!entidad?.linked_user_id || estado?.was_shared || gasto.status !== ExpenseStatus.ACTIVE) {
+                throw customError(ErrorCode.GASTO_NO_COMPARTIBLE);
+            }
+
+            const [copia] = await this.gastosRepository.create({
+                financial_entity_id: null,
+                name: gasto.name,
+                amount: gasto.amount,
+                number_of_quotas: gasto.number_of_quotas,
+                currency_type: gasto.currency_type,
+                fixed_expense: gasto.fixed_expense,
+                image_url: gasto.image_url,
+                type: gasto.type,
+                status: ExpenseStatus.PENDING_APPROVAL,
+                shared_from_id: gasto.id,
+                receiver_user_id: entidad.linked_user_id,
+            });
+            await this.movementsRepository.createGastoLog(copia.id, MovementType.CREATION);
+            await this.#copiarPagos(gasto.id, copia.id);
+
+            const receptor = entidad.linked_user_name ?? entidad.linked_user_email ?? "otro usuario";
+            await Promise.all([
+                this.gastosRepository.updateStatus(gasto.id, ExpenseStatus.PENDING_APPROVAL),
+                this.movementsRepository.createGastoLog(
+                    gasto.id, MovementType.EDITED, null, null, userId, `Compartido con ${receptor}`,
+                ),
+                session ? this.settlementRepository.removeItem(session.id, gasto.id) : null,
+            ]);
+            await this.#logEntidad(
+                gasto.financial_entity_id,
+                MovementType.EDITED,
+                `Gasto compartido con ${receptor}: "${gasto.name}"`,
+            );
+            await triggerCompartidos(entidad.linked_user_id, PusherEvent.COMPARTIDO_NUEVO, { gastoId: gasto.id });
+
+            return await this.#detalle(gasto.id, userId);
+        });
+    }
+
+    async #copiarPagos(gastoId, copiaId) {
+        const movimientos = await this.movementsRepository.getMovementsByGasto(gastoId);
+        const pagos = movimientos.filter((m) => m.movement_type === MovementType.PAYMENT).reverse();
+        for (const pago of pagos) {
+            const [pagoCopia] = await this.movementsRepository.createGastoLog(
+                copiaId,
+                MovementType.PAYMENT,
+                pago.amount,
+                pago.payment_date,
+                pago.created_by_user_id,
+                "Pago registrado antes de compartir el gasto",
+            );
+            await Promise.all([
+                this.movementsRepository.setPairedMovement(pago.id, pagoCopia.id),
+                this.movementsRepository.setPairedMovement(pagoCopia.id, pago.id),
+            ]);
+        }
     }
 
     async #crearCompraConLogs({
@@ -808,11 +906,15 @@ export class GastosService {
     }
 
     async settleQuota(purchase_id, userId, { direct = false } = {}) {
+        if (!/^\d+$/.test(String(purchase_id))) throw customError(ErrorCode.GASTO_NOT_FOUND);
+
         return this.tx(async () => {
-            const [rows, session, siblings] = await Promise.all([
+            const siblings = await this.gastosRepository.getSharedSibling(purchase_id, { includePendingApproval: true });
+            await this.gastosRepository.lockPurchases([purchase_id, siblings[0]?.sibling_id]);
+
+            const [rows, session] = await Promise.all([
                 this.#getOwnedWithOwner(purchase_id, userId),
                 direct ? null : this.getOpenSettlementSession(userId),
-                this.gastosRepository.getSharedSibling(purchase_id, { includePendingApproval: true }),
             ]);
             this.#assertCuotasLibres(rows[0]);
 
@@ -971,8 +1073,6 @@ export class GastosService {
             String(sibling.counterparty_user_id) !== String(userId);
 
         if (esCompartido) {
-            await this.gastosRepository.lockPurchases([gasto.id, sibling.sibling_id]);
-
             if (this.pagosCompartidosService) {
                 const pendientes = await this.movementsRepository.getPendingPaymentsByPurchases([sibling.sibling_id]);
                 const pendDelOtro = pendientes.find((p) => String(p.created_by_user_id) !== String(userId));

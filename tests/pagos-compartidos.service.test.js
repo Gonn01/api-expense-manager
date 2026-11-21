@@ -35,6 +35,16 @@ describe("PagosCompartidosService", () => {
             clearFavoriteIfFinalized: vi.fn(),
             getUserName: vi.fn(async () => [{ name: "Ana" }]),
             lockPurchases: vi.fn(),
+            delete: vi.fn(),
+            getSharedState: vi.fn(async () => [
+                {
+                    gasto_name: "Heladera",
+                    was_shared: true,
+                    sibling_id: 20,
+                    sibling_status: "ACTIVE",
+                    counterparty_user_id: EMISOR,
+                },
+            ]),
         };
         movementsRepository = {
             getPendingPaymentById: vi.fn(async () => [PEND]),
@@ -42,7 +52,8 @@ describe("PagosCompartidosService", () => {
             closePendingPayment: vi.fn(async (id, type) => [{ ...PEND, id, movement_type: type }]),
             createGastoLog: vi.fn(async (purchaseId, type) => [{ id: 60, purchase_id: purchaseId, movement_type: type }]),
             setPairedMovement: vi.fn(),
-            getPendingPaymentsByPurchases: vi.fn(async () => [PEND]),
+            getPendingPaymentsByPurchases: vi.fn(async ([id]) => (id === 20 ? [PEND] : [])),
+            getPendingReversalIds: vi.fn(async () => []),
             getPaymentById: vi.fn(async () => [
                 { id: 50, purchase_id: 20, movement_type: "PAYMENT", paired_movement_id: 60, reversal_requested_by_user_id: null },
             ]),
@@ -142,14 +153,85 @@ describe("PagosCompartidosService", () => {
         });
     });
 
-    describe("rechazarPendientesDeContraparte", () => {
-        it("rechaza los pendientes de la otra persona y le avisa", async () => {
-            const rejected = await service.rechazarPendientesDeContraparte(COPIA.id, RECEPTOR);
+    describe("cerrarCompartido", () => {
+        it("confirma los pagos pendientes de la otra persona y le avisa que ya no es compartido", async () => {
+            const result = await service.cerrarCompartido(COPIA.id, RECEPTOR);
 
-            expect(movementsRepository.getPendingPaymentsByPurchases).toHaveBeenCalledWith([20]);
-            expect(movementsRepository.closePendingPayment).toHaveBeenCalledWith(PEND.id, "PAYMENT_REJECTED");
-            expect(rejected).toHaveLength(1);
-            expect(triggerCompartidos).toHaveBeenCalledWith(EMISOR, PusherEvent.PAGO_RECHAZADO, expect.any(Object));
+            expect(movementsRepository.confirmPendingPayment).toHaveBeenCalledWith(PEND.id);
+            expect(movementsRepository.createGastoLog).toHaveBeenCalledWith(
+                COPIA.id,
+                "PAYMENT",
+                COPIA.amount_per_quota,
+                PEND.payment_date,
+                EMISOR,
+                expect.any(String),
+            );
+            expect(movementsRepository.closePendingPayment).not.toHaveBeenCalledWith(PEND.id, "PAYMENT_REJECTED");
+            expect(triggerCompartidos).toHaveBeenCalledWith(EMISOR, PusherEvent.COMPARTIDO_DESVINCULADO, {
+                gastoId: 20,
+                gastoName: "Heladera",
+                actorId: RECEPTOR,
+                actorName: "Ana",
+                confirmedPayments: 1,
+            });
+            expect(triggerCompartidos).not.toHaveBeenCalledWith(EMISOR, PusherEvent.PAGO_CONFIRMADO, expect.any(Object));
+            expect(result).toEqual({ siblingId: 20, confirmedPayments: 1 });
+        });
+
+        it("retira los pagos propios y cancela las reversiones pendientes", async () => {
+            movementsRepository.getPendingPaymentsByPurchases.mockImplementation(async ([id]) =>
+                id === COPIA.id ? [{ ...PEND, id: 51, purchase_id: COPIA.id }] : [],
+            );
+            movementsRepository.getPendingReversalIds.mockResolvedValue([{ id: 70 }, { id: 71 }]);
+
+            await service.cerrarCompartido(COPIA.id, RECEPTOR);
+
+            expect(movementsRepository.closePendingPayment).toHaveBeenCalledWith(51, "PAYMENT_WITHDRAWN");
+            expect(movementsRepository.clearReversalRequest).toHaveBeenCalledWith([70, 71]);
+            expect(movementsRepository.logPaymentEvent).toHaveBeenCalledWith([70, 71], "REVERSAL_CANCELLED", RECEPTOR);
+        });
+
+        it("cancela la edición pendiente", async () => {
+            const edicionesRepository = {
+                getPendingByPurchase: vi.fn(async () => [{ id: 9 }]),
+                resolve: vi.fn(),
+            };
+            service = new PagosCompartidosService({
+                gastosRepository,
+                movementsRepository,
+                settlementRepository,
+                edicionesRepository,
+                runInTransaction: (fn) => fn(),
+            });
+
+            await service.cerrarCompartido(COPIA.id, RECEPTOR);
+
+            expect(edicionesRepository.resolve).toHaveBeenCalledWith(9, "CANCELLED", RECEPTOR);
+        });
+
+        it.each(["PENDING_APPROVAL", "REJECTED"])("da de baja la copia todavía sin aceptar (%s)", async (sibling_status) => {
+            gastosRepository.getSharedState.mockResolvedValue([
+                { gasto_name: "Heladera", was_shared: true, sibling_id: 20, sibling_status, counterparty_user_id: EMISOR },
+            ]);
+
+            await service.cerrarCompartido(COPIA.id, RECEPTOR);
+
+            expect(gastosRepository.delete).toHaveBeenCalledWith(20);
+            expect(movementsRepository.createGastoLog).toHaveBeenCalledWith(20, "DELETE");
+            expect(movementsRepository.confirmPendingPayment).not.toHaveBeenCalled();
+            expect(triggerCompartidos).toHaveBeenCalledWith(
+                EMISOR,
+                PusherEvent.COMPARTIDO_DESVINCULADO,
+                expect.objectContaining({ gastoId: 20, confirmedPayments: 0 }),
+            );
+        });
+
+        it("no hace nada si el gasto no tiene otra parte activa", async () => {
+            gastosRepository.getSharedState.mockResolvedValue([{ was_shared: true, sibling_id: null }]);
+
+            expect(await service.cerrarCompartido(COPIA.id, RECEPTOR)).toBeNull();
+            expect(gastosRepository.lockPurchases).not.toHaveBeenCalled();
+            expect(triggerCompartidos).not.toHaveBeenCalled();
         });
     });
 

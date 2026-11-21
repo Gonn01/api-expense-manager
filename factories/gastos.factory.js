@@ -19,6 +19,7 @@ export function makeGastosController() {
         gastosRepository,
         movementsRepository,
         settlementRepository,
+        edicionesRepository: new EdicionesCompartidasRepository(),
     });
 
     const gastosService = new GastosService({

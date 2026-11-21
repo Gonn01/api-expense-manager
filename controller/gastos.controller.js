@@ -126,6 +126,22 @@ export class GastosController {
         }
     }
 
+    compartir = async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { userId } = req.session;
+
+            const data = await this.gastosService.compartir(id, userId);
+
+            res.json({
+                message: "Gasto compartido",
+                data
+            });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    }
+
     postergar = async (req, res) => {
         try {
             const { id } = req.params;

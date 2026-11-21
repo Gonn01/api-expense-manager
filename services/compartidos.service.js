@@ -279,6 +279,8 @@ export class CompartidosService {
             const [actor] = await this.gastosRepository.getUserName(userId);
             const aviso = { actorId: userId, actorName: actor?.name ?? null };
 
+            if (eliminarEspejo) await this.pagosCompartidosService?.cerrarCompartido(mirror.id, userId);
+
             await Promise.all([
                 this.gastosRepository.delete(original.id),
                 this.movementsRepository.createGastoLog(original.id, MovementType.DELETE),

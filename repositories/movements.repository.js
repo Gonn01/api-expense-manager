@@ -154,6 +154,20 @@ export class MovementsRepository {
         );
     }
 
+    async getPendingReversalIds(purchaseIds) {
+        const unique = [...new Set(purchaseIds.map(Number))].filter(Number.isFinite);
+        if (!unique.length) return [];
+        const placeholders = unique.map((_, i) => `$${i + 1}`).join(", ");
+        return await executeQuery(
+            `SELECT id
+             FROM purchases_movements
+             WHERE purchase_id IN (${placeholders})
+               AND movement_type = 'PAYMENT'
+               AND reversal_requested_by_user_id IS NOT NULL`,
+            unique
+        );
+    }
+
     async setPairedMovement(movementId, pairedId) {
         return await executeQuery(
             `UPDATE purchases_movements SET paired_movement_id = $2 WHERE id = $1`,

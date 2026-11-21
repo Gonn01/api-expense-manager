@@ -13,7 +13,7 @@ export function verifyToken(req, res, next) {
 
   jwt.verify(token, JWT_SECRET, (err, decoded) => {
     if (err) {
-      logRed('Token inválido', token);
+      logRed(`Token inválido: ${err.name}`);
       return res.status(HttpStatus.UNAUTHORIZED).json({ message: 'Token inválido o vencido' });
     }
 

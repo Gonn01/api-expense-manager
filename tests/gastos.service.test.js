@@ -60,6 +60,9 @@ describe("GastosService", () => {
             setFavorite: vi.fn(async () => [gasto]),
             getSharedSibling: vi.fn(async () => []),
             getSharedSiblings: vi.fn(async () => []),
+            getSharedState: vi.fn(async () => [{ was_shared: false, sibling_id: null }]),
+            updateStatus: vi.fn(async () => [gasto]),
+            create: vi.fn(async (data) => [{ id: 11, ...data }]),
             clearFavoriteIfFinalized: vi.fn(),
             clearFavoritesIfFinalized: vi.fn(),
             lockPurchases: vi.fn(),
@@ -69,7 +72,8 @@ describe("GastosService", () => {
             getMovementsByGasto: vi.fn(async () => [
                 { id: 500, movement_type: "PAYMENT", amount: 100, payment_date: "2026-10-01", created_at: "2026-10-01" },
             ]),
-            createGastoLog: vi.fn(),
+            createGastoLog: vi.fn(async (gastoId, movementType) => [{ id: 800, purchase_id: gastoId, movement_type: movementType }]),
+            setPairedMovement: vi.fn(),
             createGastoLogs: vi.fn(async (logs) => logs.map((l, i) => ({ id: 900 + i, purchase_id: l.gastoId, movement_type: l.movementType }))),
             createEntidadLog: vi.fn(),
             revertPaymentsByIds: vi.fn(async (ids) => ids.map((id) => ({ id, amount: 100, purchase_id: 10 }))),
@@ -88,6 +92,7 @@ describe("GastosService", () => {
         settlementRepository = {
             getOpenSession: vi.fn(async () => null),
             upsertItem: vi.fn(),
+            removeItem: vi.fn(),
             hasItem: vi.fn(async () => false),
             upsertItems: vi.fn(),
         };
@@ -634,8 +639,8 @@ describe("GastosService", () => {
     });
 
     describe("delete de un gasto compartido", () => {
-        it("rechaza los pagos pendientes de la otra persona antes de eliminar", async () => {
-            const pagosCompartidosService = { rechazarPendientesDeContraparte: vi.fn() };
+        it("cierra el compartido antes de eliminar", async () => {
+            const pagosCompartidosService = { cerrarCompartido: vi.fn() };
             service = new GastosService({
                 gastosRepository,
                 movementsRepository,
@@ -648,9 +653,88 @@ describe("GastosService", () => {
 
             await service.delete(10, OWNER);
 
-            expect(pagosCompartidosService.rechazarPendientesDeContraparte).toHaveBeenCalledWith(10, OWNER);
-            expect(pagosCompartidosService.rechazarPendientesDeContraparte.mock.invocationCallOrder[0])
+            expect(pagosCompartidosService.cerrarCompartido).toHaveBeenCalledWith(10, OWNER);
+            expect(pagosCompartidosService.cerrarCompartido.mock.invocationCallOrder[0])
                 .toBeLessThan(gastosRepository.delete.mock.invocationCallOrder[0]);
+        });
+
+        it("también cierra el compartido del espejo cuando se elimina", async () => {
+            gasto = makeGasto({ linked_purchase_id: 12, linked_financial_entity_id: 8 });
+            const pagosCompartidosService = { cerrarCompartido: vi.fn() };
+            service = new GastosService({
+                gastosRepository,
+                movementsRepository,
+                entidadesFinancierasRepository,
+                categoriasRepository,
+                settlementRepository,
+                pagosCompartidosService,
+                runInTransaction: (fn) => fn(),
+            });
+
+            await service.delete(10, OWNER, true);
+
+            expect(pagosCompartidosService.cerrarCompartido).toHaveBeenCalledWith(12, OWNER);
+        });
+    });
+
+    describe("restaurar un gasto que fue compartido", () => {
+        it("lo impide y lo deja eliminado", async () => {
+            gastosRepository.getSharedState.mockResolvedValue([{ was_shared: true, sibling_id: 20 }]);
+
+            await expect(service.restaurar(10, OWNER)).rejects.toMatchObject({
+                code: "GASTO_COMPARTIDO_NO_RESTAURABLE",
+                status: 409,
+            });
+            expect(gastosRepository.restore).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("compartir", () => {
+        beforeEach(() => {
+            gasto = makeGasto({ status: "ACTIVE" });
+            entidadesFinancierasRepository.getById.mockResolvedValue([
+                { id: 7, user_id: OWNER, linked_user_id: INTRUSO, linked_user_name: "Beto" },
+            ]);
+        });
+
+        it("crea la copia pendiente, copia los pagos vinculados y avisa al usuario vinculado", async () => {
+            settlementRepository.getOpenSession.mockResolvedValue({ id: 5 });
+
+            await service.compartir(10, OWNER);
+
+            expect(gastosRepository.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    financial_entity_id: null,
+                    shared_from_id: 10,
+                    receiver_user_id: INTRUSO,
+                    status: "PENDING_APPROVAL",
+                }),
+            );
+            expect(movementsRepository.createGastoLog).toHaveBeenCalledWith(
+                11, "PAYMENT", 100, "2026-10-01", undefined, expect.any(String),
+            );
+            expect(movementsRepository.setPairedMovement).toHaveBeenCalledWith(500, 800);
+            expect(movementsRepository.setPairedMovement).toHaveBeenCalledWith(800, 500);
+            expect(gastosRepository.updateStatus).toHaveBeenCalledWith(10, "PENDING_APPROVAL");
+            expect(settlementRepository.removeItem).toHaveBeenCalledWith(5, 10);
+            expect(triggerCompartidos).toHaveBeenCalledWith(INTRUSO, "compartido.nuevo", { gastoId: 10 });
+        });
+
+        it.each([
+            ["la entidad no está vinculada", () => entidadesFinancierasRepository.getById.mockResolvedValue([{ id: 7, user_id: OWNER }])],
+            ["ya fue compartido", () => gastosRepository.getSharedState.mockResolvedValue([{ was_shared: true }])],
+            ["no está activo", () => { gasto.status = "REJECTED"; }],
+        ])("rechaza si %s", async (_, preparar) => {
+            preparar();
+
+            await expect(service.compartir(10, OWNER)).rejects.toMatchObject({ code: "GASTO_NO_COMPARTIBLE", status: 409 });
+            expect(gastosRepository.create).not.toHaveBeenCalled();
+        });
+
+        it("el detalle indica si se puede compartir y con quién", async () => {
+            const detalle = await service.getById(10, OWNER);
+
+            expect(detalle).toMatchObject({ can_share: true, share_target_name: "Beto", was_shared: false });
         });
     });
 

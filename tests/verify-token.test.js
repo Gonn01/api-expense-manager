@@ -5,6 +5,7 @@ vi.mock("../config/env.js", () => ({ JWT_SECRET: "secreto-de-test" }));
 vi.mock("../utils/logs_custom.js", () => ({ logRed: vi.fn() }));
 
 import { verifyToken } from "../middleware/verify_token.js";
+import { logRed } from "../utils/logs_custom.js";
 
 function makeRes() {
     const res = {};
@@ -62,5 +63,15 @@ describe("verifyToken", () => {
 
         expect(res.status).toHaveBeenCalledWith(401);
         expect(next).not.toHaveBeenCalled();
+    });
+
+    it("no escribe el token en los logs cuando lo rechaza", () => {
+        logRed.mockClear();
+        const token = jwt.sign({ userId: 7 }, "otro-secreto");
+
+        run(`Bearer ${token}`);
+
+        expect(logRed).toHaveBeenCalledOnce();
+        expect(logRed.mock.calls.flat().join(" ")).not.toContain(token);
     });
 });

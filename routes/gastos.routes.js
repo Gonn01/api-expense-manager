@@ -16,6 +16,7 @@ router.post("/:id/settle-quota", controller.settleQuota);
 router.post("/:id/refund-cuota", controller.refundCuota);
 router.post("/:id/pagos/:movementId/revertir", controller.revertirPago);
 router.post("/:id/restaurar", controller.restaurar);
+router.post("/:id/compartir", controller.compartir);
 router.post("/settle-lote", controller.settleQuotasLote);
 
 export default router;
