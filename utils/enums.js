@@ -13,6 +13,18 @@ export const MovementType = Object.freeze({
     LINK:             'LINK',
     UNLINK:           'UNLINK',
     PURCHASE_CREATED: 'PURCHASE_CREATED',
+    PAYMENT_REQUESTED: 'PAYMENT_REQUESTED',
+    PAYMENT_REVERTED: 'PAYMENT_REVERTED',
+    REVERSAL_REQUESTED: 'REVERSAL_REQUESTED',
+    REVERSAL_CANCELLED: 'REVERSAL_CANCELLED',
+    REVERSAL_REJECTED: 'REVERSAL_REJECTED',
+    SHARED_APPROVED: 'SHARED_APPROVED',
+    SHARED_REJECTED: 'SHARED_REJECTED',
+    SHARED_RETRIED: 'SHARED_RETRIED',
+    EDIT_REQUESTED: 'EDIT_REQUESTED',
+    EDIT_APPROVED: 'EDIT_APPROVED',
+    EDIT_REJECTED: 'EDIT_REJECTED',
+    EDIT_CANCELLED: 'EDIT_CANCELLED',
 });
 
 export const Currency = Object.freeze({
@@ -39,6 +51,7 @@ export const PusherEvent = Object.freeze({
     COMPARTIDO_NUEVO:          'compartido.nuevo',
     COMPARTIDO_APROBADO:       'compartido.aprobado',
     COMPARTIDO_RECHAZADO:      'compartido.rechazado',
+    COMPARTIDO_DESCARTADO:     'compartido.descartado',
     PAGO_PENDIENTE:            'pago.pendiente',
     PAGO_CONFIRMADO:           'pago.confirmado',
     PAGO_RECHAZADO:            'pago.rechazado',
@@ -47,4 +60,8 @@ export const PusherEvent = Object.freeze({
     PAGO_REVERSION_CANCELADA:  'pago.reversion_cancelada',
     PAGO_REVERSION_ACEPTADA:   'pago.reversion_aceptada',
     PAGO_REVERSION_RECHAZADA:  'pago.reversion_rechazada',
+    EDICION_SOLICITADA:        'edicion.solicitada',
+    EDICION_APROBADA:          'edicion.aprobada',
+    EDICION_RECHAZADA:         'edicion.rechazada',
+    EDICION_CANCELADA:         'edicion.cancelada',
 });

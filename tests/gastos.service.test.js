@@ -72,8 +72,7 @@ describe("GastosService", () => {
             createGastoLog: vi.fn(),
             createGastoLogs: vi.fn(async (logs) => logs.map((l, i) => ({ id: 900 + i, purchase_id: l.gastoId, movement_type: l.movementType }))),
             createEntidadLog: vi.fn(),
-            deletePayments: vi.fn(),
-            deletePaymentsByIds: vi.fn(async (ids) => ids.map((id) => ({ id, amount: 100, purchase_id: 10 }))),
+            revertPaymentsByIds: vi.fn(async (ids) => ids.map((id) => ({ id, amount: 100, purchase_id: 10 }))),
             getPaymentById: vi.fn(async (id) => [{ id: Number(id), purchase_id: 10, movement_type: "PAYMENT", amount: 100 }]),
             getPendingPaymentsByPurchases: vi.fn(async () => []),
         };
@@ -129,7 +128,7 @@ describe("GastosService", () => {
                 expect(gastosRepository.setFavorite).not.toHaveBeenCalled();
                 expect(categoriasRepository.setCategoriasForGasto).not.toHaveBeenCalled();
                 expect(movementsRepository.createGastoLog).not.toHaveBeenCalled();
-                expect(movementsRepository.deletePaymentsByIds).not.toHaveBeenCalled();
+                expect(movementsRepository.revertPaymentsByIds).not.toHaveBeenCalled();
                 expect(settlementRepository.upsertItem).not.toHaveBeenCalled();
                 expect(settlementRepository.upsertItems).not.toHaveBeenCalled();
             });
@@ -219,6 +218,120 @@ describe("GastosService", () => {
 
         it("rechaza si no llega el usuario", async () => {
             await expect(service.assertOwnedAll([10], undefined)).rejects.toMatchObject({ code: "NO_AUTORIZADO" });
+        });
+    });
+
+    describe("gasto compartido rechazado", () => {
+        beforeEach(() => {
+            gasto = makeGasto({ status: "REJECTED" });
+        });
+
+        it("no admite un pago directo", async () => {
+            await expect(service.settleQuota(10, OWNER, { direct: true })).rejects.toMatchObject({
+                code: "GASTO_NO_ACTIVO",
+                status: 409,
+            });
+            expect(movementsRepository.createGastoLog).not.toHaveBeenCalled();
+        });
+
+        it("no se marca en la sesión abierta", async () => {
+            settlementRepository.getOpenSession.mockResolvedValue({ id: 5 });
+
+            await expect(service.settleQuota(10, OWNER)).rejects.toMatchObject({ code: "GASTO_NO_ACTIVO" });
+            expect(settlementRepository.upsertItem).not.toHaveBeenCalled();
+        });
+
+        it("el pago en lote lo deja afuera", async () => {
+            settlementRepository.getOpenSession.mockResolvedValue({ id: 5 });
+
+            const { updated, failed } = await service.settleQuotasLote([10], OWNER);
+
+            expect(updated).toEqual([]);
+            expect(failed).toEqual([{ id: 10, reason: "El gasto no está activo" }]);
+        });
+
+        it("el cierre de la sesión lo descarta sin registrar un pago", async () => {
+            const { kept, discarded } = await service.effectSettlementBatch([10], OWNER);
+
+            expect(kept).toEqual([]);
+            expect(discarded).toEqual([10]);
+            expect(movementsRepository.createGastoLogs).toHaveBeenCalledWith([]);
+        });
+
+        it("informa el error al intentar marcarlo", async () => {
+            const errores = await service.errorDeMarcado([10], OWNER);
+
+            expect(errores.get(10)).toBe("GASTO_NO_ACTIVO");
+        });
+
+        it("bloquea cambiar el monto", async () => {
+            await expect(service.update(10, OWNER, { amount: 500 })).rejects.toMatchObject({
+                code: "GASTO_CAMPO_NO_EDITABLE",
+                details: { field: "amount" },
+            });
+            expect(gastosRepository.update).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("gasto compartido que la otra persona todavía no aprobó", () => {
+        const COPIA_PENDIENTE = { sibling_id: 20, counterparty_user_id: INTRUSO, sibling_status: "PENDING_APPROVAL" };
+
+        beforeEach(() => {
+            gasto = makeGasto({ status: "PENDING_APPROVAL" });
+            gastosRepository.getSharedSibling.mockResolvedValue([COPIA_PENDIENTE]);
+            gastosRepository.getSharedSiblings.mockResolvedValue([{ purchase_id: 10, ...COPIA_PENDIENTE }]);
+        });
+
+        it("el pago directo busca también la copia pendiente y queda como pago pendiente", async () => {
+            await service.settleQuota(10, OWNER, { direct: true });
+
+            expect(gastosRepository.getSharedSibling).toHaveBeenCalledWith(10, { includePendingApproval: true });
+            expect(movementsRepository.createGastoLog).toHaveBeenCalledWith(
+                10, "PENDING_PAYMENT", expect.anything(), expect.any(Date), OWNER,
+            );
+            expect(movementsRepository.createGastoLog).not.toHaveBeenCalledWith(
+                10, "PAYMENT", expect.anything(), expect.anything(),
+            );
+        });
+
+        it("se marca en la sesión abierta", async () => {
+            settlementRepository.getOpenSession.mockResolvedValue({ id: 5 });
+
+            await service.settleQuota(10, OWNER);
+
+            expect(settlementRepository.upsertItem).toHaveBeenCalledWith(5, 10);
+        });
+
+        it("el pago en lote no lo deja afuera", async () => {
+            settlementRepository.getOpenSession.mockResolvedValue({ id: 5 });
+
+            const { failed } = await service.settleQuotasLote([10], OWNER);
+
+            expect(failed).toEqual([]);
+        });
+
+        it("el cierre de la sesión lo registra como pago pendiente", async () => {
+            const { kept } = await service.effectSettlementBatch([10], OWNER);
+
+            expect(kept).toEqual([10]);
+            expect(gastosRepository.getSharedSiblings).toHaveBeenCalledWith(["10"], { includePendingApproval: true });
+            expect(movementsRepository.createGastoLogs).toHaveBeenCalledWith([
+                expect.objectContaining({ gastoId: 10, movementType: "PENDING_PAYMENT", createdByUserId: OWNER }),
+            ]);
+        });
+
+        it("no informa error al intentar marcarlo", async () => {
+            const errores = await service.errorDeMarcado([10], OWNER);
+
+            expect(errores.has(10)).toBe(false);
+        });
+
+        it("bloquea cambiar el monto", async () => {
+            await expect(service.update(10, OWNER, { amount: 500 })).rejects.toMatchObject({
+                code: "GASTO_CAMPO_NO_EDITABLE",
+                details: { field: "amount" },
+            });
+            expect(gastosRepository.update).not.toHaveBeenCalled();
         });
     });
 
@@ -453,11 +566,11 @@ describe("GastosService", () => {
     });
 
     describe("revertirPago", () => {
-        it("en un gasto no compartido elimina ese pago y registra el reembolso", async () => {
+        it("en un gasto no compartido marca ese pago como revertido y registra el reembolso", async () => {
             const { resultado } = await service.revertirPago(10, 500, OWNER);
 
             expect(resultado).toBe("revertido");
-            expect(movementsRepository.deletePaymentsByIds).toHaveBeenCalledWith([500]);
+            expect(movementsRepository.revertPaymentsByIds).toHaveBeenCalledWith([500]);
             expect(movementsRepository.createGastoLog).toHaveBeenCalledWith(10, "REFUND", 100, expect.any(Date));
         });
 
@@ -465,7 +578,7 @@ describe("GastosService", () => {
             movementsRepository.getPaymentById.mockResolvedValue([{ id: 500, purchase_id: 99, movement_type: "PAYMENT" }]);
 
             await expect(service.revertirPago(10, 500, OWNER)).rejects.toMatchObject({ code: "PAGO_NOT_FOUND" });
-            expect(movementsRepository.deletePaymentsByIds).not.toHaveBeenCalled();
+            expect(movementsRepository.revertPaymentsByIds).not.toHaveBeenCalled();
         });
 
         describe("en un gasto compartido", () => {
@@ -490,7 +603,7 @@ describe("GastosService", () => {
 
                 expect(resultado).toBe("solicitada");
                 expect(pagosCompartidosService.solicitarReversion).toHaveBeenCalledWith(500, OWNER);
-                expect(movementsRepository.deletePaymentsByIds).not.toHaveBeenCalled();
+                expect(movementsRepository.revertPaymentsByIds).not.toHaveBeenCalled();
             });
 
             it("revertir el último pago también pide la reversión", async () => {
@@ -538,36 +651,6 @@ describe("GastosService", () => {
             expect(pagosCompartidosService.rechazarPendientesDeContraparte).toHaveBeenCalledWith(10, OWNER);
             expect(pagosCompartidosService.rechazarPendientesDeContraparte.mock.invocationCallOrder[0])
                 .toBeLessThan(gastosRepository.delete.mock.invocationCallOrder[0]);
-        });
-    });
-
-    describe("pagar un gasto compartido que la otra persona todavía no aprobó", () => {
-        const COPIA_PENDIENTE = { sibling_id: 20, counterparty_user_id: INTRUSO, sibling_status: "PENDING_APPROVAL" };
-
-        it("el pago directo busca también la copia pendiente y queda como pago pendiente", async () => {
-            gastosRepository.getSharedSibling.mockResolvedValue([COPIA_PENDIENTE]);
-
-            await service.settleQuota(10, OWNER, { direct: true });
-
-            expect(gastosRepository.getSharedSibling).toHaveBeenCalledWith(10, { includePendingApproval: true });
-            expect(movementsRepository.createGastoLog).toHaveBeenCalledWith(
-                10, "PENDING_PAYMENT", expect.anything(), expect.any(Date), OWNER,
-            );
-            expect(movementsRepository.createGastoLog).not.toHaveBeenCalledWith(
-                10, "PAYMENT", expect.anything(), expect.anything(),
-            );
-        });
-
-        it("al finalizar la sesión también queda como pago pendiente", async () => {
-            gastosRepository.getSharedSiblings.mockResolvedValue([{ purchase_id: 10, ...COPIA_PENDIENTE }]);
-
-            const { kept } = await service.effectSettlementBatch([10], OWNER);
-
-            expect(kept).toEqual([10]);
-            expect(gastosRepository.getSharedSiblings).toHaveBeenCalledWith(["10"], { includePendingApproval: true });
-            expect(movementsRepository.createGastoLogs).toHaveBeenCalledWith([
-                expect.objectContaining({ gastoId: 10, movementType: "PENDING_PAYMENT", createdByUserId: OWNER }),
-            ]);
         });
     });
 
@@ -817,7 +900,7 @@ describe("GastosService", () => {
             await service.update(10, OWNER, { name: "Otro", payed_quotas: 1 });
 
             expect(gastosRepository.update).toHaveBeenCalled();
-            expect(movementsRepository.deletePaymentsByIds).not.toHaveBeenCalled();
+            expect(movementsRepository.revertPaymentsByIds).not.toHaveBeenCalled();
         });
 
         describe("con pagos registrados", () => {

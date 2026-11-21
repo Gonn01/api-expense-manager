@@ -153,6 +153,14 @@ export class GastosRepository {
   async getGastosByEntidad(entidadId) {
     return await executeQuery(
       `SELECT p.*, ${CALCULATED_FIELDS},
+          (SELECT COUNT(*)::int FROM purchases_movements sm
+           JOIN purchases sib ON sib.id = sm.purchase_id
+           WHERE sm.movement_type = 'PENDING_PAYMENT'
+             AND sib.deleted = false
+             AND sib.status = 'ACTIVE'
+             AND ((p.shared_from_id IS NULL AND sib.shared_from_id = p.id)
+               OR (p.shared_from_id IS NOT NULL AND sib.id = p.shared_from_id))
+          ) AS counterparty_pending_quotas,
           COALESCE(
             (SELECT json_agg(json_build_object('id', c.id, 'name', c.name, 'color', c.color))
              FROM purchases_categories pc
@@ -216,15 +224,6 @@ export class GastosRepository {
       [entidadId]
     );
     return rows[0]?.count ?? 0;
-  }
-
-  async settleQuota(id) {
-    return await executeQuery(
-      `SELECT p.*, ${CALCULATED_FIELDS}
-       FROM purchases p
-       WHERE p.id = $1 AND p.deleted = false`,
-      [id]
-    );
   }
 
   async settleQuotasLote(ids) {
@@ -599,6 +598,12 @@ export class GastosRepository {
              p.number_of_quotas,
              (SELECT COUNT(*) FROM purchases_movements pm
                WHERE pm.purchase_id = p.id AND pm.movement_type = 'PAYMENT')::int AS payed_quotas,
+             ((SELECT COUNT(*) FROM purchases_movements pm
+                WHERE pm.purchase_id = p.id AND pm.movement_type = 'PAYMENT')
+              + (SELECT COUNT(*) FROM purchases_movements pp
+                  WHERE pp.purchase_id = m.purchase_id
+                    AND pp.movement_type = 'PENDING_PAYMENT'
+                    AND (pp.created_at, pp.id) <= (m.created_at, m.id)))::int AS quota_number,
              CASE WHEN p.shared_from_id IS NULL THEN sib.receiver_user_id
                   ELSE fe.user_id END AS counterparty_user_id
           FROM purchases_movements m
@@ -665,12 +670,20 @@ export class GastosRepository {
           fe_copy.name AS copy_entity_name,
           u_receiver.id AS receiver_id,
           u_receiver.name AS receiver_name,
-          u_receiver.email AS receiver_email
+          u_receiver.email AS receiver_email,
+          (fe.linked_user_id IS NOT DISTINCT FROM copy.receiver_user_id) AS can_retry,
+          mirror.id AS mirror_id,
+          fe_mirror.name AS mirror_entity_name,
+          CASE WHEN mirror.id IS NULL THEN 0 ELSE
+            (SELECT COUNT(*) FROM purchases_movements WHERE purchase_id = mirror.id AND movement_type = 'PAYMENT')::int
+          END AS mirror_payed_quotas
        FROM purchases p
        JOIN financial_entities fe ON fe.id = p.financial_entity_id AND fe.user_id = $1
        JOIN purchases copy ON copy.shared_from_id = p.id AND copy.deleted = false
        LEFT JOIN financial_entities fe_copy ON fe_copy.id = copy.financial_entity_id
        JOIN users u_receiver ON u_receiver.id = copy.receiver_user_id
+       LEFT JOIN purchases mirror ON mirror.id = p.linked_purchase_id AND mirror.deleted = false
+       LEFT JOIN financial_entities fe_mirror ON fe_mirror.id = mirror.financial_entity_id
        WHERE p.deleted = false AND p.status IN ('PENDING_APPROVAL', 'REJECTED')
          AND copy.status IN ('PENDING_APPROVAL', 'REJECTED')
        ORDER BY p.created_at DESC`,

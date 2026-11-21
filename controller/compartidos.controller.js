@@ -52,6 +52,19 @@ export class CompartidosController {
         }
     }
 
+    descartar = async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { userId } = req.session;
+            const { delete_linked } = req.body ?? {};
+
+            const data = await this.compartidosService.descartar(id, userId, delete_linked);
+            res.json({ message: "Gasto descartado", data });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    }
+
     confirmarPago = async (req, res) => {
         try {
             const { movementId } = req.params;
@@ -107,6 +120,57 @@ export class CompartidosController {
 
             const data = await this.compartidosService.rechazarReversion(movementId, userId);
             res.json({ message: "Reversión rechazada", data });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    }
+
+    solicitarEdicion = async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { userId } = req.session;
+            const { amount, currency_type, type, fixed_expense, number_of_quotas } = req.body ?? {};
+
+            const data = await this.compartidosService.solicitarEdicion(id, userId, {
+                amount, currency_type, type, fixed_expense, number_of_quotas,
+            });
+            res.json({ message: "Solicitud de edición enviada", data });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    }
+
+    aprobarEdicion = async (req, res) => {
+        try {
+            const { editId } = req.params;
+            const { userId } = req.session;
+
+            const data = await this.compartidosService.aprobarEdicion(editId, userId);
+            res.json({ message: "Edición aprobada", data });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    }
+
+    rechazarEdicion = async (req, res) => {
+        try {
+            const { editId } = req.params;
+            const { userId } = req.session;
+
+            const data = await this.compartidosService.rechazarEdicion(editId, userId);
+            res.json({ message: "Edición rechazada", data });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    }
+
+    cancelarEdicion = async (req, res) => {
+        try {
+            const { editId } = req.params;
+            const { userId } = req.session;
+
+            const data = await this.compartidosService.cancelarEdicion(editId, userId);
+            res.json({ message: "Solicitud de edición cancelada", data });
         } catch (err) {
             return handleError(res, err);
         }

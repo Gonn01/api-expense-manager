@@ -236,6 +236,7 @@ describe("SettlementService: pagos compartidos en el resumen", () => {
             { id: 3, movement_type: "PAYMENT_REJECTED" },
             { id: 4, movement_type: "PAYMENT_WITHDRAWN" },
             { id: 5, movement_type: "PAYMENT", reversal_requested_by_user_id: 9 },
+            { id: 6, movement_type: "PAYMENT_REVERTED" },
         ]);
 
         const snapshot = await service.getSnapshot(USER, 1);

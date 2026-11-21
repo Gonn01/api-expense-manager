@@ -5,6 +5,7 @@ import { logBlue, logGray } from "./utils/logs_custom.js";
 import { errorMiddleware } from "./utils/errors.js";
 
 const app = express();
+app.disable("x-powered-by");
 app.use(cors({
     origin: [
         'https://web-plataformas-de-desarrollo.vercel.app',

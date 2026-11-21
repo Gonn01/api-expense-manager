@@ -18,7 +18,7 @@ export class MovementsRepository {
                     reversal_requested_by_user_id, reversal_requested_at
              FROM purchases_movements
              WHERE purchase_id = $1
-             ORDER BY created_at DESC`,
+             ORDER BY created_at DESC, id DESC`,
             [gastoId]
         );
     }
@@ -29,13 +29,6 @@ export class MovementsRepository {
              VALUES (NOW(), $1, $2, $3)
              RETURNING *`,
             [entidadId, movementType, detail]
-        );
-    }
-
-    async deletePayments(gastoId) {
-        return await executeQuery(
-            `DELETE FROM purchases_movements WHERE purchase_id = $1 AND movement_type = 'PAYMENT'`,
-            [gastoId]
         );
     }
 
@@ -80,22 +73,49 @@ export class MovementsRepository {
     }
 
     async confirmPendingPayment(movementId) {
-        return await executeQuery(
-            `UPDATE purchases_movements
-             SET movement_type = 'PAYMENT'
-             WHERE id = $1 AND movement_type = 'PENDING_PAYMENT'
-             RETURNING *`,
-            [movementId]
-        );
+        return await this.closePendingPayment(movementId, "PAYMENT");
     }
 
     async closePendingPayment(movementId, movementType) {
         return await executeQuery(
-            `UPDATE purchases_movements
-             SET movement_type = $2
-             WHERE id = $1 AND movement_type = 'PENDING_PAYMENT'
-             RETURNING *`,
+            `WITH original AS (
+                 SELECT *
+                 FROM purchases_movements
+                 WHERE id = $1 AND movement_type = 'PENDING_PAYMENT'
+                 FOR UPDATE
+             ),
+             resolved AS (
+                 UPDATE purchases_movements pm
+                 SET movement_type = $2, created_at = NOW()
+                 FROM original
+                 WHERE pm.id = original.id
+                 RETURNING pm.*
+             ),
+             requested AS (
+                 INSERT INTO purchases_movements
+                     (created_at, purchase_id, movement_type, amount, payment_date,
+                      created_by_user_id, detail, paired_movement_id)
+                 SELECT created_at, purchase_id, 'PAYMENT_REQUESTED'::movement_type, amount, payment_date,
+                        created_by_user_id, detail, id
+                 FROM original
+             )
+             SELECT * FROM resolved`,
             [movementId, movementType]
+        );
+    }
+
+    async logPaymentEvent(movementIds, movementType, userId) {
+        const ids = movementIds.filter((id) => id != null);
+        if (!ids.length) return [];
+        const placeholders = ids.map((_, i) => `$${i + 3}`).join(", ");
+        return await executeQuery(
+            `INSERT INTO purchases_movements
+                 (created_at, purchase_id, movement_type, created_by_user_id, paired_movement_id)
+             SELECT NOW(), purchase_id, $1::movement_type, $2::integer, id
+             FROM purchases_movements
+             WHERE id IN (${placeholders})
+             RETURNING *`,
+            [movementType, userId, ...ids]
         );
     }
 
@@ -167,12 +187,15 @@ export class MovementsRepository {
         );
     }
 
-    async deletePaymentsByIds(movementIds) {
+    async revertPaymentsByIds(movementIds) {
         const ids = movementIds.filter((id) => id != null);
         if (!ids.length) return [];
         const placeholders = ids.map((_, i) => `$${i + 1}`).join(", ");
         return await executeQuery(
-            `DELETE FROM purchases_movements
+            `UPDATE purchases_movements
+             SET movement_type = 'PAYMENT_REVERTED',
+                 reversal_requested_by_user_id = NULL,
+                 reversal_requested_at = NULL
              WHERE id IN (${placeholders}) AND movement_type = 'PAYMENT'
              RETURNING *`,
             ids

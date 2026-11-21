@@ -21,6 +21,8 @@ const CATALOG = Object.freeze({
     GASTO_NO_PENDIENTE_APROBACION: { status: HttpStatus.BAD_REQUEST, message: "El gasto no está pendiente de aprobación" },
     GASTO_COMPARTIDO_NO_ASOCIADO: { status: HttpStatus.BAD_REQUEST, message: "No hay gasto compartido asociado" },
     GASTO_COMPARTIDO_NO_RECHAZADO: { status: HttpStatus.BAD_REQUEST, message: "El gasto compartido no está rechazado" },
+    GASTO_COMPARTIDO_DESVINCULADO: { status: HttpStatus.CONFLICT, message: "La entidad ya no está vinculada a esa persona: no se puede reintentar, solo descartar." },
+    GASTO_NO_ACTIVO: { status: HttpStatus.CONFLICT, message: "El gasto no está activo: la otra persona lo rechazó." },
     GASTO_YA_SALDADO: { status: HttpStatus.CONFLICT, message: "El gasto ya tiene todas sus cuotas pagas" },
     SIN_CUOTAS_PARA_REVERTIR: { status: HttpStatus.BAD_REQUEST, message: "No hay cuotas pagadas para revertir" },
     LISTA_IDS_INVALIDA: { status: HttpStatus.BAD_REQUEST, message: "La lista de IDs de compra es inválida." },
@@ -48,6 +50,9 @@ const CATALOG = Object.freeze({
     GASTO_CUOTAS_CUBIERTAS: { status: HttpStatus.CONFLICT, message: "Las cuotas que quedan ya tienen pagos esperando confirmación." },
     REVERSION_YA_SOLICITADA: { status: HttpStatus.CONFLICT, message: "Ya hay una solicitud de reversión pendiente para este pago." },
     REVERSION_NOT_FOUND: { status: HttpStatus.NOT_FOUND, message: "No hay una solicitud de reversión pendiente para este pago." },
+    EDICION_NOT_FOUND: { status: HttpStatus.NOT_FOUND, message: "No hay una solicitud de edición pendiente." },
+    EDICION_YA_SOLICITADA: { status: HttpStatus.CONFLICT, message: "Este gasto ya tiene una solicitud de edición pendiente." },
+    EDICION_SIN_CAMBIOS: { status: HttpStatus.BAD_REQUEST, message: "La solicitud no cambia ningún dato del gasto." },
 
     SETTLEMENT_REQUIRED: { status: HttpStatus.CONFLICT, message: 'Activá el modo "Hacer cuentas" para registrar pagos.' },
     NO_OPEN_SESSION: { status: HttpStatus.BAD_REQUEST, message: "No hay una sesión de cuentas abierta" },

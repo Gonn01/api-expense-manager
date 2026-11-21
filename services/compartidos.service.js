@@ -10,21 +10,26 @@ export class CompartidosService {
         entidadesFinancierasRepository,
         movementsRepository,
         pagosCompartidosService,
+        settlementRepository,
+        edicionesCompartidasService,
         runInTransaction = withTransaction,
     }) {
         this.gastosRepository = gastosRepository;
         this.entidadesFinancierasRepository = entidadesFinancierasRepository;
         this.movementsRepository = movementsRepository;
         this.pagosCompartidosService = pagosCompartidosService;
+        this.settlementRepository = settlementRepository;
+        this.edicionesCompartidasService = edicionesCompartidasService;
         this.tx = runInTransaction;
     }
 
     async getCompartidos(userId) {
-        const [recibidos, emitidos, pagosRows, reversionesRows] = await Promise.all([
+        const [recibidos, emitidos, pagosRows, reversionesRows, ediciones] = await Promise.all([
             this.gastosRepository.getCompartidosRecibidos(userId),
             this.gastosRepository.getCompartidosEmitidos(userId),
             this.gastosRepository.getPagosCompartidos(userId),
             this.gastosRepository.getReversionesCompartidas(userId),
+            this.edicionesCompartidasService?.listar(userId) ?? { porConfirmar: [], esperando: [] },
         ]);
 
         const pagos = { porConfirmar: [], esperando: [] };
@@ -39,7 +44,23 @@ export class CompartidosService {
             else reversiones.porConfirmar.push(r);
         }
 
-        return { recibidos, emitidos, pagos, reversiones };
+        return { recibidos, emitidos, pagos, reversiones, ediciones };
+    }
+
+    async solicitarEdicion(gastoId, userId, input) {
+        return this.edicionesCompartidasService.solicitar(gastoId, userId, input);
+    }
+
+    async aprobarEdicion(id, userId) {
+        return this.edicionesCompartidasService.aprobar(id, userId);
+    }
+
+    async rechazarEdicion(id, userId) {
+        return this.edicionesCompartidasService.rechazar(id, userId);
+    }
+
+    async cancelarEdicion(id, userId) {
+        return this.edicionesCompartidasService.cancelar(id, userId);
     }
 
     async confirmarPago(movementId, userId) {
@@ -64,6 +85,14 @@ export class CompartidosService {
 
     async cancelarReversion(movementId, userId) {
         return this.pagosCompartidosService.cancelarReversion(movementId, userId);
+    }
+
+    #logEstadoCompartido(gastoIds, movementType, userId) {
+        return this.movementsRepository.createGastoLogs(
+            gastoIds
+                .filter((gastoId) => gastoId != null)
+                .map((gastoId) => ({ gastoId, movementType, createdByUserId: userId })),
+        );
     }
 
     async #vincularAlEmisor(entityId, userId, senderUserId) {
@@ -137,6 +166,7 @@ export class CompartidosService {
 
             await Promise.all([
                 this.gastosRepository.updateStatus(gasto.shared_from_id, ExpenseStatus.ACTIVE),
+                this.#logEstadoCompartido([gastoId, gasto.shared_from_id], MovementType.SHARED_APPROVED, userId),
                 notif && triggerCompartidos(notif.sender_user_id, PusherEvent.COMPARTIDO_APROBADO, {
                     gastoId,
                     entityId: notif.sender_entity_id,
@@ -171,6 +201,7 @@ export class CompartidosService {
                 this.gastosRepository.updateStatus(gastoId, ExpenseStatus.REJECTED),
                 this.gastosRepository.updateStatus(gasto.shared_from_id, ExpenseStatus.REJECTED),
                 this.#rechazarPagosPendientes(gasto.shared_from_id),
+                this.#logEstadoCompartido([gastoId, gasto.shared_from_id], MovementType.SHARED_REJECTED, userId),
                 notif && triggerCompartidos(notif.sender_user_id, PusherEvent.COMPARTIDO_RECHAZADO, {
                     gastoId,
                     entityId: notif.sender_entity_id,
@@ -183,29 +214,108 @@ export class CompartidosService {
         });
     }
 
+    async #rechazadoDelEmisor(gastoId, userId) {
+        if (!/^\d+$/.test(String(gastoId))) throw customError(ErrorCode.GASTO_NOT_FOUND);
+
+        const [originalRows, copyRows] = await Promise.all([
+            this.gastosRepository.getById(gastoId),
+            this.gastosRepository.getSharedCopyByOriginalId(gastoId),
+        ]);
+        if (!originalRows.length) throw customError(ErrorCode.GASTO_NOT_FOUND);
+
+        const [entidad] = await this.entidadesFinancierasRepository.getById(
+            originalRows[0].financial_entity_id,
+            userId,
+        );
+        if (!entidad) throw customError(ErrorCode.NO_AUTORIZADO);
+        if (!copyRows.length) throw customError(ErrorCode.GASTO_COMPARTIDO_NO_ASOCIADO);
+
+        await this.gastosRepository.lockPurchases([gastoId, copyRows[0].id]);
+        const [[original], [copy]] = await Promise.all([
+            this.gastosRepository.getById(gastoId),
+            this.gastosRepository.getSharedCopyByOriginalId(gastoId),
+        ]);
+        if (!original) throw customError(ErrorCode.GASTO_NOT_FOUND);
+        if (!copy) throw customError(ErrorCode.GASTO_COMPARTIDO_NO_ASOCIADO);
+        if (copy.status !== ExpenseStatus.REJECTED || original.status !== ExpenseStatus.REJECTED) {
+            throw customError(ErrorCode.GASTO_COMPARTIDO_NO_RECHAZADO);
+        }
+
+        return { original, copy, entidad };
+    }
+
     async reintentar(gastoId, userId) {
         return this.tx(async () => {
-            const originalRows = await this.gastosRepository.getById(gastoId);
-            if (!originalRows.length) throw customError(ErrorCode.GASTO_NOT_FOUND);
+            const { copy, entidad } = await this.#rechazadoDelEmisor(gastoId, userId);
 
-            const original = originalRows[0];
-
-            const entidad = await this.entidadesFinancierasRepository.getById(original.financial_entity_id, userId);
-            if (!entidad.length) throw customError(ErrorCode.NO_AUTORIZADO);
-
-            const copyRows = await this.gastosRepository.getSharedCopyByOriginalId(gastoId);
-            if (!copyRows.length) throw customError(ErrorCode.GASTO_COMPARTIDO_NO_ASOCIADO);
-
-            const copy = copyRows[0];
-            if (copy.status !== ExpenseStatus.REJECTED) throw customError(ErrorCode.GASTO_COMPARTIDO_NO_RECHAZADO);
+            if (String(entidad.linked_user_id) !== String(copy.receiver_user_id)) {
+                throw customError(ErrorCode.GASTO_COMPARTIDO_DESVINCULADO);
+            }
 
             const [[updated]] = await Promise.all([
                 this.gastosRepository.updateStatus(copy.id, ExpenseStatus.PENDING_APPROVAL),
                 this.gastosRepository.updateStatus(gastoId, ExpenseStatus.PENDING_APPROVAL),
+                this.#logEstadoCompartido([gastoId, copy.id], MovementType.SHARED_RETRIED, userId),
                 triggerCompartidos(copy.receiver_user_id, PusherEvent.COMPARTIDO_NUEVO, { gastoId }),
             ]);
 
             return updated;
         });
+    }
+
+    async descartar(gastoId, userId, deleteLinked) {
+        return this.tx(async () => {
+            const { original, copy } = await this.#rechazadoDelEmisor(gastoId, userId);
+
+            const linkedId = original.linked_purchase_id;
+            const [mirror] = linkedId ? await this.gastosRepository.getById(linkedId) : [];
+            if (mirror && typeof deleteLinked !== "boolean") {
+                throw customError(ErrorCode.VALIDATION_ERROR, {
+                    message: "Elegí si conservar o eliminar el movimiento vinculado.",
+                    details: { field: "delete_linked" },
+                });
+            }
+            const eliminarEspejo = Boolean(mirror) && deleteLinked === true;
+            const [actor] = await this.gastosRepository.getUserName(userId);
+            const aviso = { actorId: userId, actorName: actor?.name ?? null };
+
+            await Promise.all([
+                this.gastosRepository.delete(original.id),
+                this.movementsRepository.createGastoLog(original.id, MovementType.DELETE),
+                linkedId ? this.gastosRepository.unlink(original.id) : null,
+                eliminarEspejo ? this.gastosRepository.delete(mirror.id) : null,
+                eliminarEspejo ? this.movementsRepository.createGastoLog(mirror.id, MovementType.DELETE) : null,
+                triggerCompartidos(copy.receiver_user_id, PusherEvent.COMPARTIDO_DESCARTADO, { gastoId: copy.id, ...aviso }),
+                triggerCompartidos(userId, PusherEvent.COMPARTIDO_DESCARTADO, { gastoId: original.id, ...aviso }),
+            ]);
+
+            if (eliminarEspejo && this.settlementRepository) {
+                const session = await this.settlementRepository.getOpenSession(userId);
+                if (session) await this.settlementRepository.removeItems(session.id, [mirror.id]);
+            }
+
+            await this.#logBaja(original.financial_entity_id, original.name);
+            if (eliminarEspejo) await this.#logBaja(mirror.financial_entity_id, mirror.name);
+
+            return {
+                id: original.id,
+                mirror_id: mirror?.id ?? null,
+                mirror_deleted: eliminarEspejo,
+            };
+        });
+    }
+
+    async #logBaja(entityId, nombre) {
+        try {
+            await bestEffort(() =>
+                this.movementsRepository.createEntidadLog(
+                    entityId,
+                    MovementType.DELETE,
+                    `Gasto eliminado: "${nombre}"`,
+                ),
+            );
+        } catch (err) {
+            logRed(`[historial entidad ${entityId}] no se pudo registrar DELETE: ${err.message}`);
+        }
     }
 }
