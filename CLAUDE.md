@@ -42,13 +42,13 @@ npm run dev                  # same as above
 npm test                     # vitest run
 npm run test:watch           # vitest watch mode
 npm run test:coverage        # vitest run --coverage
+npm run test:integration     # HTTP tests against a temporary local Postgres (needs PostgreSQL binaries; PG_BIN overrides their folder)
 npx vitest run tests/gastos.controller.test.js              # run a single test file
 npx vitest run tests/gastos.controller.test.js -t "<name>"  # run a single test by name
 npx eslint .                  # lint (no npm script wraps this; eslint.config.js is flat config)
-node seed.js                  # seed dev DB with fake data (truncates tables first — do not run against prod)
 ```
 
-There is no `build` or `start` script; entry point is `index.js` (`node index.js` to run directly). Tests are pure unit tests — no live DB needed to run them: controller tests mock the service layer, and `tests/gastos.service.test.js` mocks the repositories to test business rules (ownership, remaining quotas).
+There is no `build` or `start` script; entry point is `index.js` (`node index.js` to run directly). `npm test` runs pure unit tests — no live DB needed: controller tests mock the service layer, `tests/gastos.service.test.js` mocks the repositories to test business rules (ownership, remaining quotas), and `tests/routes.authorization.test.js` mounts the real routes over a mocked DB to check that every protected route rejects invalid tokens (add new routes to its `PROTECTED_ROUTES`). `tests/integration/` creates a throwaway Postgres from `migrations/schema.sql` plus the migrations in `PENDING_MIGRATIONS` (`support/global-setup.js`), refuses non-local connections and fakes Pusher. After running a migration in production, regenerate `schema.sql` and remove it from that list. `it.fails` tests named `BUG CONOCIDO` document open bugs: when one is fixed, the test fails until it becomes a plain `it`.
 
 ## Architecture
 
@@ -76,7 +76,7 @@ There is no DI container/framework — factories instantiate everything by hand.
 
 **Config**: `config/env.js` loads `.env` via `dotenv` and exports `JWT_SECRET`/`DATABASE_URL` as named constants — other modules import these constants rather than reading `process.env` directly.
 
-**Migrations**: there is no schema-migration tool (no Prisma/Knex/node-pg-migrate); the Postgres schema is managed outside this repo. Schema changes are written as `migrations/manual/<date>_<reason>.sql` and run by hand against the database before deploying the code that needs them. `migrate.js` is misleadingly named — it's a one-off script that imports a legacy app's `data.json` export into the current schema, not a schema migrator.
+**Migrations**: there is no schema-migration tool (no Prisma/Knex/node-pg-migrate); the Postgres schema is managed outside this repo. Schema changes are written as `migrations/manual/<date>_<reason>.sql` and run by hand against the database before deploying the code that needs them.
 
 ## Conventions
 

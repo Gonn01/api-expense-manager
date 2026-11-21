@@ -803,11 +803,15 @@ export class GastosService {
     }
 
     async settleQuota(purchase_id, userId, { direct = false } = {}) {
+        if (!/^\d+$/.test(String(purchase_id))) throw customError(ErrorCode.GASTO_NOT_FOUND);
+
         return this.tx(async () => {
-            const [rows, session, siblings] = await Promise.all([
+            const siblings = await this.gastosRepository.getSharedSibling(purchase_id);
+            await this.gastosRepository.lockPurchases([purchase_id, siblings[0]?.sibling_id]);
+
+            const [rows, session] = await Promise.all([
                 this.#getOwnedWithOwner(purchase_id, userId),
                 direct ? null : this.getOpenSettlementSession(userId),
-                this.gastosRepository.getSharedSibling(purchase_id),
             ]);
             this.#assertCuotasLibres(rows[0]);
 
@@ -958,8 +962,6 @@ export class GastosService {
             String(sibling.counterparty_user_id) !== String(userId);
 
         if (esCompartido) {
-            await this.gastosRepository.lockPurchases([gasto.id, sibling.sibling_id]);
-
             if (this.pagosCompartidosService) {
                 const pendientes = await this.movementsRepository.getPendingPaymentsByPurchases([sibling.sibling_id]);
                 const pendDelOtro = pendientes.find((p) => String(p.created_by_user_id) !== String(userId));

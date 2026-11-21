@@ -60,7 +60,7 @@ Reglas:
 
 ## 5. Datos
 
-- Sin ORM y sin herramienta de migraciones: el esquema de Postgres se administra fuera del repo. Un cambio de esquema (columna nueva, valor nuevo del enum `movement_type`) se deja como `.sql` en `migrations/manual/<fecha>_<motivo>.sql` y se ejecuta a mano contra la base **antes** de desplegar el código que lo usa. `migrate.js` **no** migra el esquema; es un script puntual que importa datos de una app anterior. `ensureGastosSchema` (en `gastos.repository.js`) no se llama desde ningún lado.
+- Sin ORM y sin herramienta de migraciones: el esquema de Postgres se administra fuera del repo. Un cambio de esquema (columna nueva, valor nuevo del enum `movement_type`) se deja como `.sql` en `migrations/manual/<fecha>_<motivo>.sql` y se ejecuta a mano contra la base **antes** de desplegar el código que lo usa. `ensureGastosSchema` (en `gastos.repository.js`) no se llama desde ningún lado.
 - Baja lógica: entidades, gastos y categorías llevan `deleted`. Toda consulta de lectura filtra `deleted = false`, salvo el listado `GET /entidades-financieras`, que devuelve activas y eliminadas juntas con el campo `deleted` para que cada cliente las separe.
 - Eliminar una entidad (`EntidadesFinancierasService.eliminar`, en una transacción) da de baja también sus gastos con `purchases.deleted_with_entity = true`, después de `rechazarPendientesDeContraparte` por cada uno; desenlaza los espejos (`unlinkMany`), registra `DELETE` en cada gasto y los quita de la sesión abierta. Responde la entidad con `deleted_purchase_ids` para que el cliente los desmarque. Restaurar la entidad restaura solo los gastos con `deleted_with_entity = true` y registra `RESTORE`. Eliminar o restaurar un gasto suelto deja la marca en `false`, así un gasto eliminado antes no vuelve con la entidad. La columna se crea con `migrations/manual/2026-11-16_purchases_deleted_with_entity.sql`.
 - Las cuotas pagas no se guardan: se cuentan los movimientos `PAYMENT` de `purchases_movements` (y las pendientes, los `PENDING_PAYMENT`). Los tipos históricos (`PAYMENT_REQUESTED`, `PAYMENT_REVERTED`, `REVERSAL_REQUESTED`, `REVERSAL_CANCELLED`, `REVERSAL_REJECTED`, `SHARED_APPROVED`, `SHARED_REJECTED`, `SHARED_RETRIED`) solo son líneas del historial: ninguna consulta de cuotas o saldos los cuenta.
@@ -91,7 +91,7 @@ Reglas:
 - **Toda operación de service con más de una escritura va en una transacción**: `return this.tx(async () => { … })`. Los services reciben `runInTransaction` por constructor (por defecto, `withTransaction`); los tests unitarios pasan `(fn) => fn()`. Una operación de una sola escritura no la necesita.
 - Dentro de una transacción las consultas van por una sola conexión. Se pueden lanzar en paralelo con `Promise.all`, salvo `bestEffort`, que se espera sola: lo que corra en paralelo quedaría dentro de su savepoint.
 - **Cada consulta es un viaje a la base** (~200 ms desde una máquina local contra Supabase). En las acciones frecuentes conviene ahorrarlos: verificar pertenencia y leer el gasto en una sola consulta (`#getOwnedWithOwner`), mandar en paralelo las escrituras independientes y registrar el historial de la entidad después de la transacción (sin savepoint), como hacen `postergarGasto` y `crearGasto`. `crearGasto` además guarda la postergación en el mismo INSERT, registra la creación y las cuotas pagas en una sola inserción (`createGastoLogs`) y asigna las categorías de un gasto nuevo con `addCategoriasToNewGasto`, que inserta y devuelve las categorías en una consulta (sin el DELETE de `setCategoriasForGasto`, porque un gasto nuevo no tiene ninguna). Devuelve el gasto con sus cuotas pagas reales (`payed_quotas`, fechas de pago y finalización) y, si se creó un espejo en la entidad de pago, ese espejo en `mirror`: los clientes lo insertan en su estado sin recargar.
-- Si hay riesgo de que dos pedidos simultáneos procesen lo mismo, la fila se bloquea con `SELECT … FOR UPDATE` dentro de la transacción. Lo hace, por ejemplo, el cierre de la sesión de cuentas (`getOpenSession(userId, { forUpdate: true })`). Las operaciones sobre pagos compartidos bloquean el gasto y su copia con `gastosRepository.lockPurchases(ids)`, que ordena los ids para que dos transacciones no se bloqueen mutuamente, y leen los pagos recién después del bloqueo.
+- Si hay riesgo de que dos pedidos simultáneos procesen lo mismo, la fila se bloquea con `SELECT … FOR UPDATE` dentro de la transacción. Lo hace, por ejemplo, el cierre de la sesión de cuentas (`getOpenSession(userId, { forUpdate: true })`). Las operaciones sobre pagos compartidos bloquean el gasto y su copia con `gastosRepository.lockPurchases(ids)`, que ordena los ids para que dos transacciones no se bloqueen mutuamente, y leen los pagos recién después del bloqueo. `GastosService.settleQuota` hace lo mismo antes de validar las cuotas restantes, para que pedidos simultáneos no registren más pagos que cuotas.
 - Un método de repository que hace varias consultas también se envuelve en `withTransaction`, como `setCategoriasForGasto`, que hace DELETE + INSERT.
 
 ## 6. Tiempo real
@@ -113,12 +113,14 @@ npm run dev                # node --watch index.js
 npm test                   # vitest run
 npm run test:watch
 npm run test:coverage
+npm run test:integration   # HTTP contra un Postgres local temporal
 npx vitest run tests/<archivo>.test.js -t "<nombre>"
 npx eslint .
-node seed.js               # carga datos falsos; TRUNCA las tablas: nunca contra producción
 ```
 
-Los tests son unitarios y no necesitan base de datos: los de controllers simulan el service, los de services simulan los repositories y pasan `runInTransaction: (fn) => fn()`, y `tests/db.test.js` simula postgres.js para probar los helpers de transacciones.
+Los tests de `npm test` son unitarios y no necesitan base de datos: los de controllers simulan el service, los de services simulan los repositories y pasan `runInTransaction: (fn) => fn()`, y `tests/db.test.js` simula postgres.js para probar los helpers de transacciones. `tests/routes.authorization.test.js` levanta las rutas reales con la base simulada y verifica que cada ruta protegida responda 401 sin un token válido y que el usuario salga del token, no del body.
+
+Los de `tests/integration/` (`npm run test:integration`) prueban los flujos por HTTP y con SQL real. Crean un Postgres temporal con los binarios locales (`PG_BIN` cambia su carpeta), cargan `migrations/schema.sql` y las migraciones de `PENDING_MIGRATIONS` en `support/global-setup.js`, rechazan cualquier conexión que no sea local y reemplazan Pusher por un doble. Después de ejecutar una migración en producción, se regenera `schema.sql` con `pg_dump --schema-only --no-owner --no-privileges --schema=public` y se la quita de esa lista. Los tests `it.fails` con nombre `BUG CONOCIDO` documentan un bug abierto: al corregirlo fallan hasta pasarlos a `it`.
 
 ## 9. Checklist: endpoint o recurso nuevo
 
@@ -130,6 +132,6 @@ Los tests son unitarios y no necesitan base de datos: los de controllers simulan
 - [ ] Errores de dominio nuevos en el `CATALOG`.
 - [ ] Movimiento de historial si la operación lo amerita.
 - [ ] Evento de Pusher si afecta a otro usuario.
-- [ ] Test del controller en `tests/`, y del service si agrega una regla de negocio o de pertenencia.
+- [ ] Test del controller en `tests/`, y del service si agrega una regla de negocio o de pertenencia. La ruta nueva se agrega a `PROTECTED_ROUTES` en `tests/routes.authorization.test.js`.
 - [ ] **Clientes**: función en `src/services/api.js` de la web y provider + repository en Flutter; códigos de error en ambos catálogos.
 - [ ] **Documentación**: ver `.claude\guides\documentacion.md` en el repo de la web (`c:\Users\gonza\Desktop\web-plataformas-de-desarrollo`).
