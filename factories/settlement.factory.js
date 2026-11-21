@@ -3,6 +3,7 @@ import { SettlementRepository } from "../repositories/settlement.repository.js";
 import { SettlementService } from "../services/settlement.service.js";
 import { GastosService } from "../services/gastos.service.js";
 import { PagosCompartidosService } from "../services/pagos-compartidos.service.js";
+import { EdicionesCompartidasRepository } from "../repositories/ediciones-compartidas.repository.js";
 import { GastosRepository } from "../repositories/gastos.repository.js";
 import { MovementsRepository } from "../repositories/movements.repository.js";
 import { EntidadesFinancierasRepository } from "../repositories/entidades-financieras.repository.js";
@@ -17,6 +18,7 @@ export function makeSettlementController() {
         gastosRepository,
         movementsRepository,
         settlementRepository,
+        edicionesRepository: new EdicionesCompartidasRepository(),
     });
 
     const gastosService = new GastosService({

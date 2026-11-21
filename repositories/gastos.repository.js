@@ -189,6 +189,8 @@ export class GastosRepository {
   async getDeletedByEntidad(entidadId) {
     return await executeQuery(
       `SELECT p.*, ${CALCULATED_FIELDS},
+          NOT (p.shared_from_id IS NOT NULL
+               OR EXISTS (SELECT 1 FROM purchases c WHERE c.shared_from_id = p.id)) AS can_restore,
           COALESCE(
             (SELECT json_agg(json_build_object('id', c.id, 'name', c.name, 'color', c.color))
              FROM purchases_categories pc
@@ -282,6 +284,8 @@ export class GastosRepository {
     return await executeQuery(
       `UPDATE purchases SET deleted = false, deleted_with_entity = false
        WHERE financial_entity_id = $1 AND deleted = true AND deleted_with_entity = true
+         AND shared_from_id IS NULL
+         AND NOT EXISTS (SELECT 1 FROM purchases c WHERE c.shared_from_id = purchases.id)
        RETURNING id`,
       [entidadId]
     );
@@ -515,6 +519,30 @@ export class GastosRepository {
        LEFT JOIN users cp
          ON cp.id = CASE WHEN p.shared_from_id IS NULL THEN sib.receiver_user_id ELSE fe.user_id END
        WHERE p.id = $1 AND p.deleted = false
+       LIMIT 1`,
+      [purchaseId]
+    );
+  }
+
+  async getSharedState(purchaseId) {
+    return await executeQuery(
+      `SELECT
+          p.name AS gasto_name,
+          (p.shared_from_id IS NOT NULL
+           OR EXISTS (SELECT 1 FROM purchases c WHERE c.shared_from_id = p.id)) AS was_shared,
+          sib.id AS sibling_id,
+          sib.status AS sibling_status,
+          cp.id AS counterparty_user_id,
+          cp.name AS counterparty_name
+       FROM purchases p
+       LEFT JOIN purchases sib
+         ON ((p.shared_from_id IS NULL AND sib.shared_from_id = p.id)
+          OR (p.shared_from_id IS NOT NULL AND sib.id = p.shared_from_id))
+        AND sib.deleted = false
+       LEFT JOIN financial_entities fe ON fe.id = sib.financial_entity_id
+       LEFT JOIN users cp
+         ON cp.id = CASE WHEN p.shared_from_id IS NULL THEN sib.receiver_user_id ELSE fe.user_id END
+       WHERE p.id = $1
        LIMIT 1`,
       [purchaseId]
     );

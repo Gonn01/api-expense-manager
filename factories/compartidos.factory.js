@@ -18,6 +18,7 @@ export function makeCompartidosController() {
         gastosRepository,
         movementsRepository,
         settlementRepository,
+        edicionesRepository: new EdicionesCompartidasRepository(),
     });
 
     const edicionesCompartidasService = new EdicionesCompartidasService({

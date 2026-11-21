@@ -54,6 +54,7 @@ const PROTECTED_ROUTES = [
     ["post", "/gastos/1/refund-cuota"],
     ["post", "/gastos/1/pagos/2/revertir"],
     ["post", "/gastos/1/restaurar"],
+    ["post", "/gastos/1/compartir"],
     ["post", "/gastos/settle-lote"],
     ["get", "/categorias"],
     ["post", "/categorias"],

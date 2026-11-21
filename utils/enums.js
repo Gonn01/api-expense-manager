@@ -82,6 +82,7 @@ export const PusherEvent = Object.freeze({
     COMPARTIDO_APROBADO: 'compartido.aprobado',
     COMPARTIDO_RECHAZADO: 'compartido.rechazado',
     COMPARTIDO_DESCARTADO: 'compartido.descartado',
+    COMPARTIDO_DESVINCULADO: 'compartido.desvinculado',
     PAGO_PENDIENTE: 'pago.pendiente',
     PAGO_CONFIRMADO: 'pago.confirmado',
     PAGO_RECHAZADO: 'pago.rechazado',

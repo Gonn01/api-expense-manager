@@ -1,10 +1,17 @@
-import { MovementType, PusherEvent } from "../utils/enums.js";
+import { ExpenseStatus, MovementType, PusherEvent } from "../utils/enums.js";
 import { triggerCompartidos } from "../utils/pusher.js";
 import { customError, ErrorCode } from "../utils/errors.js";
 import { withTransaction } from "../db.js";
 
 export class PagosCompartidosService {
-    constructor({ gastosRepository, movementsRepository, settlementRepository, runInTransaction = withTransaction }) {
+    constructor({
+        gastosRepository,
+        movementsRepository,
+        settlementRepository,
+        edicionesRepository,
+        runInTransaction = withTransaction,
+    }) {
+        this.edicionesRepository = edicionesRepository;
         this.gastosRepository = gastosRepository;
         this.movementsRepository = movementsRepository;
         this.settlementRepository = settlementRepository;
@@ -158,24 +165,73 @@ export class PagosCompartidosService {
         });
     }
 
-    async rechazarPendientesDeContraparte(gastoId, userId) {
-        const [sibling] = await this.gastosRepository.getSharedSibling(gastoId);
-        if (!sibling) return [];
+    async cerrarCompartido(gastoId, userId) {
+        const [inicial] = await this.gastosRepository.getSharedState(gastoId);
+        if (!inicial?.sibling_id) return null;
 
-        const pendientes = await this.movementsRepository.getPendingPaymentsByPurchases([sibling.sibling_id]);
-        const rejected = [];
-        for (const pend of pendientes) {
-            const [row] = await this.movementsRepository.closePendingPayment(
-                pend.id,
-                MovementType.PAYMENT_REJECTED,
-            );
-            if (row) rejected.push(row);
+        await this.gastosRepository.lockPurchases([gastoId, inicial.sibling_id]);
+        const [estado] = await this.gastosRepository.getSharedState(gastoId);
+        if (!estado?.sibling_id) return null;
+
+        const confirmedPayments =
+            estado.sibling_status === ExpenseStatus.ACTIVE
+                ? await this.#resolverPagosAlCerrar(gastoId, estado.sibling_id, userId)
+                : await this.#darDeBajaCopiaSinAceptar(estado.sibling_id);
+        await this.#cancelarEdicionAlCerrar(gastoId, estado.sibling_id, userId);
+
+        if (estado.counterparty_user_id != null) {
+            await triggerCompartidos(estado.counterparty_user_id, PusherEvent.COMPARTIDO_DESVINCULADO, {
+                gastoId: estado.sibling_id,
+                gastoName: estado.gasto_name,
+                actorId: userId,
+                actorName: await this.#actorName(userId),
+                confirmedPayments,
+            });
+        }
+        return { siblingId: estado.sibling_id, confirmedPayments };
+    }
+
+    async #resolverPagosAlCerrar(gastoId, siblingId, userId) {
+        const [delOtro, propios, reversiones] = await Promise.all([
+            this.movementsRepository.getPendingPaymentsByPurchases([siblingId]),
+            this.movementsRepository.getPendingPaymentsByPurchases([gastoId]),
+            this.movementsRepository.getPendingReversalIds([gastoId, siblingId]),
+        ]);
+
+        for (const pend of propios) {
+            await this.movementsRepository.closePendingPayment(pend.id, MovementType.PAYMENT_WITHDRAWN);
+        }
+        for (const pend of delOtro) {
+            await this.#confirmarPendiente(pend, gastoId);
         }
 
-        if (rejected.length) {
-            await this.#notificar(sibling.counterparty_user_id, PusherEvent.PAGO_RECHAZADO, sibling.sibling_id, userId);
+        const reversionIds = reversiones.map((r) => r.id);
+        if (reversionIds.length) {
+            await Promise.all([
+                this.movementsRepository.clearReversalRequest(reversionIds),
+                this.movementsRepository.logPaymentEvent(reversionIds, MovementType.REVERSAL_CANCELLED, userId),
+            ]);
         }
-        return rejected;
+        return delOtro.length;
+    }
+
+    async #darDeBajaCopiaSinAceptar(copiaId) {
+        await Promise.all([
+            this.gastosRepository.delete(copiaId),
+            this.movementsRepository.createGastoLog(copiaId, MovementType.DELETE),
+        ]);
+        return 0;
+    }
+
+    async #cancelarEdicionAlCerrar(gastoId, siblingId, userId) {
+        if (!this.edicionesRepository) return;
+        const [edicion] = await this.edicionesRepository.getPendingByPurchase(gastoId);
+        if (!edicion) return;
+        await Promise.all([
+            this.edicionesRepository.resolve(edicion.id, "CANCELLED", userId),
+            this.movementsRepository.createGastoLog(gastoId, MovementType.EDIT_CANCELLED, null, null, userId),
+            this.movementsRepository.createGastoLog(siblingId, MovementType.EDIT_CANCELLED, null, null, userId),
+        ]);
     }
 
     async #getPagoConPartes(movementId, userId) {

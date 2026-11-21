@@ -130,7 +130,7 @@ export class EntidadesFinancierasService {
       const ids = gastos.map((g) => g.id);
       if (this.pagosCompartidosService) {
         await Promise.all(
-          ids.map((gastoId) => this.pagosCompartidosService.rechazarPendientesDeContraparte(gastoId, userId)),
+          ids.map((gastoId) => this.pagosCompartidosService.cerrarCompartido(gastoId, userId)),
         );
       }
 

@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
     countMovements,
+    createEntity,
+    createExpense,
     createSharedExpense,
     createUser,
     executeQuery,
@@ -207,8 +209,84 @@ describe("reversión", () => {
     });
 });
 
+describe("baja de un gasto compartido", () => {
+    it("confirma el pago pendiente de la otra persona, le avisa y no se puede restaurar", async () => {
+        await beto.post(`/gastos/${shared.copyId}/settle-quota`, { direct: true });
+        sentEvents.length = 0;
+
+        expect((await ana.delete(`/gastos/${shared.ownerExpense}`)).status).toBe(200);
+
+        expect(await countMovements(shared.copyId, "PENDING_PAYMENT")).toBe(0);
+        expect(await countMovements(shared.copyId, "PAYMENT")).toBe(1);
+        expect(await countMovements(shared.ownerExpense, "PAYMENT")).toBe(1);
+        expect(JSON.stringify(sentEvents)).toContain("compartido.desvinculado");
+
+        const copia = await beto.get(`/gastos/${shared.copyId}`);
+        expect(copia.data.shared_counterparty).toBeNull();
+        expect(copia.data.was_shared).toBe(true);
+        expect(copia.data.can_share).toBe(false);
+
+        const restored = await ana.post(`/gastos/${shared.ownerExpense}/restaurar`);
+        expect(restored.status).toBe(409);
+        expect(restored.code).toBe("GASTO_COMPARTIDO_NO_RESTAURABLE");
+
+        const entidad = await ana.get(`/entidades-financieras/${shared.ownerEntity}`);
+        expect(entidad.data.gastos_eliminados[0].can_restore).toBe(false);
+    });
+
+    it("retira los pagos propios sin confirmar de quien elimina", async () => {
+        await payAsAna();
+
+        await ana.delete(`/gastos/${shared.ownerExpense}`);
+
+        expect(await countMovements(shared.ownerExpense, "PENDING_PAYMENT")).toBe(0);
+        expect(await countMovements(shared.ownerExpense, "PAYMENT_WITHDRAWN")).toBe(1);
+        expect(await countMovements(shared.copyId, "PAYMENT")).toBe(0);
+    });
+});
+
+describe("compartir un gasto existente", () => {
+    it("envía la copia con las cuotas pagas vinculadas y queda pendiente hasta que la acepten", async () => {
+        const entity = await createEntity(ana, "Sin vincular");
+        const gasto = await createExpense(ana, entity, { number_of_quotas: 3 });
+        await ana.post(`/gastos/${gasto}/settle-quota`, { direct: true });
+
+        expect((await ana.post(`/gastos/${gasto}/compartir`)).code).toBe("GASTO_NO_COMPARTIBLE");
+
+        await ana.put(`/entidades-financieras/${entity}/vincular-usuario`, { email: carla.email });
+        const detalle = await ana.get(`/gastos/${gasto}`);
+        expect(detalle.data.can_share).toBe(true);
+
+        const response = await ana.post(`/gastos/${gasto}/compartir`);
+        expect(response.status).toBe(200);
+        expect(response.data.status).toBe("PENDING_APPROVAL");
+        expect(response.data.was_shared).toBe(true);
+        expect(response.data.can_share).toBe(false);
+
+        const [copia] = await executeQuery("SELECT id, status FROM purchases WHERE shared_from_id = $1", [gasto]);
+        expect(copia.status).toBe("PENDING_APPROVAL");
+        const pagoOriginal = await latestMovement(gasto, "PAYMENT");
+        const pagoCopia = await latestMovement(copia.id, "PAYMENT");
+        expect(Number(pagoCopia.paired_movement_id)).toBe(Number(pagoOriginal.id));
+        expect(Number(pagoOriginal.paired_movement_id)).toBe(Number(pagoCopia.id));
+
+        const aprobado = await carla.post(`/compartidos/${copia.id}/aprobar`, { new_entity_name: "De Ana" });
+        expect(aprobado.status).toBe(200);
+        expect(await paidQuotas(carla, copia.id)).toBe(1);
+        expect((await ana.get(`/gastos/${gasto}`)).data.status).toBe("ACTIVE");
+        expect((await ana.post(`/gastos/${gasto}/compartir`)).code).toBe("GASTO_NO_COMPARTIBLE");
+    });
+
+    it("un usuario ajeno no puede compartirlo", async () => {
+        const entity = await createEntity(ana, "Ajena");
+        const gasto = await createExpense(ana, entity);
+
+        expect((await beto.post(`/gastos/${gasto}/compartir`)).status).toBe(403);
+    });
+});
+
 describe("baja de una entidad compartida", () => {
-    it("rechaza los pagos pendientes de la contraparte", async () => {
+    it("confirma los pagos pendientes de la contraparte y no restaura el gasto compartido", async () => {
         await beto.post(`/gastos/${shared.copyId}/settle-quota`, { direct: true });
 
         const [row] = await executeQuery(
@@ -218,6 +296,13 @@ describe("baja de una entidad compartida", () => {
         await ana.delete(`/entidades-financieras/${row.financial_entity_id}`);
 
         expect(await countMovements(shared.copyId, "PENDING_PAYMENT")).toBe(0);
-        expect(await countMovements(shared.copyId, "PAYMENT_REJECTED")).toBe(1);
+        expect(await countMovements(shared.copyId, "PAYMENT_REJECTED")).toBe(0);
+        expect(await countMovements(shared.copyId, "PAYMENT")).toBe(1);
+        expect(await countMovements(shared.ownerExpense, "PAYMENT")).toBe(1);
+
+        await ana.put(`/entidades-financieras/${row.financial_entity_id}/restaurar`);
+        const [gasto] = await executeQuery("SELECT deleted FROM purchases WHERE id = $1", [shared.ownerExpense]);
+        expect(gasto.deleted).toBe(true);
+        expect((await ana.post(`/gastos/${shared.ownerExpense}/restaurar`)).status).toBe(409);
     });
 });
