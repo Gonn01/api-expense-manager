@@ -52,6 +52,19 @@ export class CompartidosController {
         }
     }
 
+    descartar = async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { userId } = req.session;
+            const { delete_linked } = req.body ?? {};
+
+            const data = await this.compartidosService.descartar(id, userId, delete_linked);
+            res.json({ message: "Gasto descartado", data });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    }
+
     confirmarPago = async (req, res) => {
         try {
             const { movementId } = req.params;

@@ -6,6 +6,7 @@ import { withTransaction, bestEffort } from "../db.js";
 
 export const MAX_INSTALLMENTS = 360;
 const MAX_INSTALLMENTS_MESSAGE = `El máximo es de ${MAX_INSTALLMENTS} cuotas.`;
+const ESTADOS_SIN_ACEPTAR = new Set([ExpenseStatus.PENDING_APPROVAL, ExpenseStatus.REJECTED]);
 
 export class GastosService {
     constructor({
@@ -116,7 +117,12 @@ export class GastosService {
         );
     }
 
+    #sinAceptar({ status }) {
+        return ESTADOS_SIN_ACEPTAR.has(status);
+    }
+
     #assertCuotasLibres(gasto) {
+        if (this.#sinAceptar(gasto)) throw customError(ErrorCode.GASTO_NO_ACTIVO);
         this.#assertQuotasRestantes(gasto);
         if (this.#cuotasCubiertas(gasto)) {
             throw customError(ErrorCode.GASTO_CUOTAS_CUBIERTAS);
@@ -129,7 +135,8 @@ export class GastosService {
         const rows = await this.gastosRepository.getByIdsWithOwner(valid, userId);
         const errores = new Map();
         for (const gasto of rows) {
-            if (this.#isFullyPaid(gasto)) errores.set(Number(gasto.id), ErrorCode.GASTO_YA_SALDADO);
+            if (this.#sinAceptar(gasto)) errores.set(Number(gasto.id), ErrorCode.GASTO_NO_ACTIVO);
+            else if (this.#isFullyPaid(gasto)) errores.set(Number(gasto.id), ErrorCode.GASTO_YA_SALDADO);
             else if (this.#cuotasCubiertas(gasto)) errores.set(Number(gasto.id), ErrorCode.GASTO_CUOTAS_CUBIERTAS);
         }
         return errores;
@@ -308,7 +315,7 @@ export class GastosService {
         const shared =
             hasSibling ||
             Boolean(gasto.shared_from_id) ||
-            gasto.status === ExpenseStatus.PENDING_APPROVAL;
+            this.#sinAceptar(gasto);
 
         const locks = {};
         const lock = (fields, reason) => {
@@ -878,7 +885,7 @@ export class GastosService {
                 const gasto = byId.get(id);
                 const fullyPaid = gasto && this.#isFullyPaid(gasto);
 
-                if (!gasto || !gasto.owned || gasto.is_postponed || fullyPaid) {
+                if (!gasto || !gasto.owned || gasto.is_postponed || fullyPaid || this.#sinAceptar(gasto)) {
                     discarded.push(Number(id));
                     continue;
                 }
@@ -1082,6 +1089,11 @@ export class GastosService {
             const { owned, ...gasto } = row;
             if (!owned) {
                 failed.push({ id, reason: "No autorizado" });
+                continue;
+            }
+
+            if (this.#sinAceptar(gasto)) {
+                failed.push({ id, reason: "El gasto no está activo" });
                 continue;
             }
 

@@ -14,5 +14,6 @@ router.post("/pagos/:movementId/reversion/cancelar", controller.cancelarReversio
 router.post("/:id/aprobar", controller.aprobar);
 router.post("/:id/rechazar", controller.rechazar);
 router.post("/:id/reintentar", controller.reintentar);
+router.post("/:id/descartar", controller.descartar);
 
 export default router;

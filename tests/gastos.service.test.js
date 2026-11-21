@@ -222,6 +222,58 @@ describe("GastosService", () => {
         });
     });
 
+    describe.each(["REJECTED", "PENDING_APPROVAL"])("gasto compartido en estado %s", (status) => {
+        beforeEach(() => {
+            gasto = makeGasto({ status });
+        });
+
+        it("no admite un pago directo", async () => {
+            await expect(service.settleQuota(10, OWNER, { direct: true })).rejects.toMatchObject({
+                code: "GASTO_NO_ACTIVO",
+                status: 409,
+            });
+            expect(movementsRepository.createGastoLog).not.toHaveBeenCalled();
+        });
+
+        it("no se marca en la sesión abierta", async () => {
+            settlementRepository.getOpenSession.mockResolvedValue({ id: 5 });
+
+            await expect(service.settleQuota(10, OWNER)).rejects.toMatchObject({ code: "GASTO_NO_ACTIVO" });
+            expect(settlementRepository.upsertItem).not.toHaveBeenCalled();
+        });
+
+        it("el pago en lote lo deja afuera", async () => {
+            settlementRepository.getOpenSession.mockResolvedValue({ id: 5 });
+
+            const { updated, failed } = await service.settleQuotasLote([10], OWNER);
+
+            expect(updated).toEqual([]);
+            expect(failed).toEqual([{ id: 10, reason: "El gasto no está activo" }]);
+        });
+
+        it("el cierre de la sesión lo descarta sin registrar un pago", async () => {
+            const { kept, discarded } = await service.effectSettlementBatch([10], OWNER);
+
+            expect(kept).toEqual([]);
+            expect(discarded).toEqual([10]);
+            expect(movementsRepository.createGastoLogs).toHaveBeenCalledWith([]);
+        });
+
+        it("informa el error al intentar marcarlo", async () => {
+            const errores = await service.errorDeMarcado([10], OWNER);
+
+            expect(errores.get(10)).toBe("GASTO_NO_ACTIVO");
+        });
+
+        it("bloquea cambiar el monto", async () => {
+            await expect(service.update(10, OWNER, { amount: 500 })).rejects.toMatchObject({
+                code: "GASTO_CAMPO_NO_EDITABLE",
+                details: { field: "amount" },
+            });
+            expect(gastosRepository.update).not.toHaveBeenCalled();
+        });
+    });
+
     describe("settleQuota: cuotas restantes", () => {
         it("pago directo: registra el pago si quedan cuotas", async () => {
             await service.settleQuota(10, OWNER, { direct: true });

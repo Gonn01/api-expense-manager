@@ -23,6 +23,7 @@ export function makeCompartidosController() {
         entidadesFinancierasRepository,
         movementsRepository,
         pagosCompartidosService,
+        settlementRepository,
     });
 
     return new CompartidosController(compartidosService);
