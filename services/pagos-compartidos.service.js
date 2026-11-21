@@ -213,7 +213,11 @@ export class PagosCompartidosService {
                 throw customError(ErrorCode.REVERSION_YA_SOLICITADA);
             }
 
-            const rows = await this.movementsRepository.setReversalRequest(this.#idsDelPar(pago), userId);
+            const ids = this.#idsDelPar(pago);
+            const [rows] = await Promise.all([
+                this.movementsRepository.setReversalRequest(ids, userId),
+                this.movementsRepository.logPaymentEvent(ids, MovementType.REVERSAL_REQUESTED, userId),
+            ]);
             await this.#notificar(otherUserId, PusherEvent.PAGO_REVERSION_SOLICITADA, pago.purchase_id, userId);
             return rows.find((r) => String(r.id) === String(pago.id)) ?? rows[0];
         });
@@ -227,7 +231,11 @@ export class PagosCompartidosService {
                 throw customError(ErrorCode.NO_AUTORIZADO);
             }
 
-            const rows = await this.movementsRepository.clearReversalRequest(this.#idsDelPar(pago));
+            const ids = this.#idsDelPar(pago);
+            const [rows] = await Promise.all([
+                this.movementsRepository.clearReversalRequest(ids),
+                this.movementsRepository.logPaymentEvent(ids, MovementType.REVERSAL_CANCELLED, userId),
+            ]);
             await this.#notificar(otherUserId, PusherEvent.PAGO_REVERSION_CANCELADA, pago.purchase_id, userId);
             return rows[0];
         });
@@ -269,7 +277,11 @@ export class PagosCompartidosService {
             const { pago } = await this.#getPagoConPartes(movementId, userId);
             this.#assertPuedeResponder(pago, userId);
 
-            const rows = await this.movementsRepository.clearReversalRequest(this.#idsDelPar(pago));
+            const ids = this.#idsDelPar(pago);
+            const [rows] = await Promise.all([
+                this.movementsRepository.clearReversalRequest(ids),
+                this.movementsRepository.logPaymentEvent(ids, MovementType.REVERSAL_REJECTED, userId),
+            ]);
             await this.#notificar(
                 pago.reversal_requested_by_user_id,
                 PusherEvent.PAGO_REVERSION_RECHAZADA,

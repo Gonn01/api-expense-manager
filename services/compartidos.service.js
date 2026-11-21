@@ -68,6 +68,14 @@ export class CompartidosService {
         return this.pagosCompartidosService.cancelarReversion(movementId, userId);
     }
 
+    #logEstadoCompartido(gastoIds, movementType, userId) {
+        return this.movementsRepository.createGastoLogs(
+            gastoIds
+                .filter((gastoId) => gastoId != null)
+                .map((gastoId) => ({ gastoId, movementType, createdByUserId: userId })),
+        );
+    }
+
     async #vincularAlEmisor(entityId, userId, senderUserId) {
         const yaVinculada = await this.entidadesFinancierasRepository.findByLinkedUser(userId, senderUserId);
         if (yaVinculada.length) return;
@@ -139,6 +147,7 @@ export class CompartidosService {
 
             await Promise.all([
                 this.gastosRepository.updateStatus(gasto.shared_from_id, ExpenseStatus.ACTIVE),
+                this.#logEstadoCompartido([gastoId, gasto.shared_from_id], MovementType.SHARED_APPROVED, userId),
                 notif && triggerCompartidos(notif.sender_user_id, PusherEvent.COMPARTIDO_APROBADO, {
                     gastoId,
                     entityId: notif.sender_entity_id,
@@ -165,6 +174,7 @@ export class CompartidosService {
             const [[updated]] = await Promise.all([
                 this.gastosRepository.updateStatus(gastoId, ExpenseStatus.REJECTED),
                 this.gastosRepository.updateStatus(gasto.shared_from_id, ExpenseStatus.REJECTED),
+                this.#logEstadoCompartido([gastoId, gasto.shared_from_id], MovementType.SHARED_REJECTED, userId),
                 notif && triggerCompartidos(notif.sender_user_id, PusherEvent.COMPARTIDO_RECHAZADO, {
                     gastoId,
                     entityId: notif.sender_entity_id,
@@ -218,6 +228,7 @@ export class CompartidosService {
             const [[updated]] = await Promise.all([
                 this.gastosRepository.updateStatus(copy.id, ExpenseStatus.PENDING_APPROVAL),
                 this.gastosRepository.updateStatus(gastoId, ExpenseStatus.PENDING_APPROVAL),
+                this.#logEstadoCompartido([gastoId, copy.id], MovementType.SHARED_RETRIED, userId),
                 triggerCompartidos(copy.receiver_user_id, PusherEvent.COMPARTIDO_NUEVO, { gastoId }),
             ]);
 

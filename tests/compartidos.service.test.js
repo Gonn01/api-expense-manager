@@ -32,13 +32,22 @@ describe("CompartidosService.aprobar: vínculo con el emisor", () => {
             findByLinkedUser: vi.fn(async () => []),
             vincularUsuario: vi.fn(),
         };
-        movementsRepository = { createEntidadLog: vi.fn(), createGastoLog: vi.fn() };
+        movementsRepository = { createEntidadLog: vi.fn(), createGastoLog: vi.fn(), createGastoLogs: vi.fn() };
         service = new CompartidosService({
             gastosRepository,
             entidadesFinancierasRepository,
             movementsRepository,
             runInTransaction: (fn) => fn(),
         });
+    });
+
+    it("al aprobar deja la línea en el historial de los dos gastos", async () => {
+        await service.aprobar(GASTO.id, RECEPTOR, 7, null);
+
+        expect(movementsRepository.createGastoLogs).toHaveBeenCalledWith([
+            { gastoId: GASTO.id, movementType: "SHARED_APPROVED", createdByUserId: RECEPTOR },
+            { gastoId: GASTO.shared_from_id, movementType: "SHARED_APPROVED", createdByUserId: RECEPTOR },
+        ]);
     });
 
     it("vincula al emisor una entidad existente sin vínculo", async () => {
@@ -93,11 +102,13 @@ describe("CompartidosService.aprobar: vínculo con el emisor", () => {
 
 describe("CompartidosService.rechazar", () => {
     let gastosRepository;
+    let movementsRepository;
     let service;
 
     beforeEach(async () => {
         const { triggerCompartidos } = await import("../utils/pusher.js");
         triggerCompartidos.mockClear();
+        movementsRepository = { createGastoLogs: vi.fn() };
         gastosRepository = {
             getById: vi.fn(async () => [GASTO]),
             getCopyNotificationData: vi.fn(async () => [
@@ -108,7 +119,7 @@ describe("CompartidosService.rechazar", () => {
         service = new CompartidosService({
             gastosRepository,
             entidadesFinancierasRepository: {},
-            movementsRepository: {},
+            movementsRepository,
             runInTransaction: (fn) => fn(),
         });
     });
@@ -120,6 +131,10 @@ describe("CompartidosService.rechazar", () => {
 
         expect(updated).toEqual({ id: GASTO.id, status: "REJECTED" });
         expect(gastosRepository.updateStatus).toHaveBeenCalledWith(GASTO.shared_from_id, "REJECTED");
+        expect(movementsRepository.createGastoLogs).toHaveBeenCalledWith([
+            { gastoId: GASTO.id, movementType: "SHARED_REJECTED", createdByUserId: RECEPTOR },
+            { gastoId: GASTO.shared_from_id, movementType: "SHARED_REJECTED", createdByUserId: RECEPTOR },
+        ]);
         expect(triggerCompartidos).toHaveBeenCalledWith(EMISOR, "compartido.rechazado", {
             gastoId: GASTO.id,
             entityId: 5,
@@ -174,7 +189,7 @@ describe("CompartidosService: gasto rechazado del emisor", () => {
         entidadesFinancierasRepository = {
             getById: vi.fn(async () => [{ id: 5, user_id: EMISOR, linked_user_id: RECEPTOR }]),
         };
-        movementsRepository = { createGastoLog: vi.fn(), createEntidadLog: vi.fn() };
+        movementsRepository = { createGastoLog: vi.fn(), createGastoLogs: vi.fn(), createEntidadLog: vi.fn() };
         settlementRepository = {
             getOpenSession: vi.fn(async () => ({ id: 77 })),
             removeItems: vi.fn(),
@@ -194,6 +209,10 @@ describe("CompartidosService: gasto rechazado del emisor", () => {
 
             expect(gastosRepository.updateStatus).toHaveBeenCalledWith(COPIA.id, "PENDING_APPROVAL");
             expect(gastosRepository.updateStatus).toHaveBeenCalledWith(ORIGINAL.id, "PENDING_APPROVAL");
+            expect(movementsRepository.createGastoLogs).toHaveBeenCalledWith([
+                { gastoId: ORIGINAL.id, movementType: "SHARED_RETRIED", createdByUserId: EMISOR },
+                { gastoId: COPIA.id, movementType: "SHARED_RETRIED", createdByUserId: EMISOR },
+            ]);
             expect(triggerCompartidos).toHaveBeenCalledWith(RECEPTOR, "compartido.nuevo", { gastoId: ORIGINAL.id });
         });
 

@@ -48,6 +48,7 @@ describe("PagosCompartidosService", () => {
             ]),
             setReversalRequest: vi.fn(async (ids) => ids.map((id) => ({ id }))),
             clearReversalRequest: vi.fn(async (ids) => ids.map((id) => ({ id }))),
+            logPaymentEvent: vi.fn(async () => []),
             deletePaymentsByIds: vi.fn(async (ids) =>
                 ids.map((id) => ({ id, purchase_id: id === 50 ? 20 : 30, amount: 100 })),
             ),
@@ -157,6 +158,7 @@ describe("PagosCompartidosService", () => {
             await service.solicitarReversion(50, EMISOR);
 
             expect(movementsRepository.setReversalRequest).toHaveBeenCalledWith([50, 60], EMISOR);
+            expect(movementsRepository.logPaymentEvent).toHaveBeenCalledWith([50, 60], "REVERSAL_REQUESTED", EMISOR);
             expect(triggerCompartidos).toHaveBeenCalledWith(RECEPTOR, PusherEvent.PAGO_REVERSION_SOLICITADA, expect.any(Object));
         });
 
@@ -194,6 +196,7 @@ describe("PagosCompartidosService", () => {
                 await service.rechazarReversion(50, RECEPTOR);
 
                 expect(movementsRepository.clearReversalRequest).toHaveBeenCalledWith([50, 60]);
+                expect(movementsRepository.logPaymentEvent).toHaveBeenCalledWith([50, 60], "REVERSAL_REJECTED", RECEPTOR);
                 expect(movementsRepository.deletePaymentsByIds).not.toHaveBeenCalled();
                 expect(triggerCompartidos).toHaveBeenCalledWith(EMISOR, PusherEvent.PAGO_REVERSION_RECHAZADA, expect.any(Object));
             });
@@ -204,6 +207,7 @@ describe("PagosCompartidosService", () => {
                 await service.cancelarReversion(50, EMISOR);
 
                 expect(movementsRepository.clearReversalRequest).toHaveBeenCalledWith([50, 60]);
+                expect(movementsRepository.logPaymentEvent).toHaveBeenCalledWith([50, 60], "REVERSAL_CANCELLED", EMISOR);
                 expect(triggerCompartidos).toHaveBeenCalledWith(RECEPTOR, PusherEvent.PAGO_REVERSION_CANCELADA, expect.any(Object));
             });
 
