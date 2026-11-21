@@ -149,6 +149,13 @@ export class CompartidosService {
         });
     }
 
+    async #rechazarPagosPendientes(originalId) {
+        const pendientes = await this.movementsRepository.getPendingPaymentsByPurchases([originalId]);
+        for (const pend of pendientes) {
+            await this.movementsRepository.closePendingPayment(pend.id, MovementType.PAYMENT_REJECTED);
+        }
+    }
+
     async rechazar(gastoId, userId) {
         return this.tx(async () => {
             const rows = await this.gastosRepository.getById(gastoId);
@@ -163,6 +170,7 @@ export class CompartidosService {
             const [[updated]] = await Promise.all([
                 this.gastosRepository.updateStatus(gastoId, ExpenseStatus.REJECTED),
                 this.gastosRepository.updateStatus(gasto.shared_from_id, ExpenseStatus.REJECTED),
+                this.#rechazarPagosPendientes(gasto.shared_from_id),
                 notif && triggerCompartidos(notif.sender_user_id, PusherEvent.COMPARTIDO_RECHAZADO, {
                     gastoId,
                     entityId: notif.sender_entity_id,

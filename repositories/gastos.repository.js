@@ -99,6 +99,12 @@ async function ensureMovementTypeValue(value) {
   await executeQuery(`ALTER TYPE "${meta.typname}" ADD VALUE '${value}'`);
 }
 
+function siblingStatusCondition(includePendingApproval) {
+  return includePendingApproval
+    ? "sib.status IN ('ACTIVE', 'PENDING_APPROVAL')"
+    : "sib.status = 'ACTIVE'";
+}
+
 export class GastosRepository {
   async getById(id) {
     return await executeQuery(
@@ -476,7 +482,7 @@ export class GastosRepository {
     );
   }
 
-  async getSharedSiblings(purchaseIds) {
+  async getSharedSiblings(purchaseIds, { includePendingApproval = false } = {}) {
     if (!purchaseIds.length) return [];
     const placeholders = purchaseIds.map((_, i) => `$${i + 1}`).join(", ");
     return await executeQuery(
@@ -484,13 +490,14 @@ export class GastosRepository {
           p.id AS purchase_id,
           sib.id AS sibling_id,
           cp.id AS counterparty_user_id,
-          cp.name AS counterparty_name
+          cp.name AS counterparty_name,
+          sib.status AS sibling_status
        FROM purchases p
        JOIN purchases sib
          ON ((p.shared_from_id IS NULL AND sib.shared_from_id = p.id)
           OR (p.shared_from_id IS NOT NULL AND sib.id = p.shared_from_id))
         AND sib.deleted = false
-        AND sib.status = 'ACTIVE'
+        AND ${siblingStatusCondition(includePendingApproval)}
        LEFT JOIN financial_entities fe ON fe.id = sib.financial_entity_id
        LEFT JOIN users cp
          ON cp.id = CASE WHEN p.shared_from_id IS NULL THEN sib.receiver_user_id ELSE fe.user_id END
@@ -500,18 +507,19 @@ export class GastosRepository {
     );
   }
 
-  async getSharedSibling(purchaseId) {
+  async getSharedSibling(purchaseId, { includePendingApproval = false } = {}) {
     return await executeQuery(
       `SELECT
           sib.id AS sibling_id,
           cp.id AS counterparty_user_id,
-          cp.name AS counterparty_name
+          cp.name AS counterparty_name,
+          sib.status AS sibling_status
        FROM purchases p
        JOIN purchases sib
          ON ((p.shared_from_id IS NULL AND sib.shared_from_id = p.id)
           OR (p.shared_from_id IS NOT NULL AND sib.id = p.shared_from_id))
         AND sib.deleted = false
-        AND sib.status = 'ACTIVE'
+        AND ${siblingStatusCondition(includePendingApproval)}
        LEFT JOIN financial_entities fe ON fe.id = sib.financial_entity_id
        LEFT JOIN users cp
          ON cp.id = CASE WHEN p.shared_from_id IS NULL THEN sib.receiver_user_id ELSE fe.user_id END
@@ -585,6 +593,7 @@ export class GastosRepository {
              m.purchase_id,
              m.created_by_user_id,
              sib.id AS sibling_purchase_id,
+             sib.status AS sibling_status,
              p.name AS gasto_name,
              p.currency_type,
              p.number_of_quotas,
@@ -607,7 +616,8 @@ export class GastosRepository {
        FROM pend
        JOIN users registrar ON registrar.id = pend.created_by_user_id
        JOIN users counterparty ON counterparty.id = pend.counterparty_user_id
-       WHERE pend.created_by_user_id = $1 OR pend.counterparty_user_id = $1
+       WHERE pend.created_by_user_id = $1
+          OR (pend.counterparty_user_id = $1 AND pend.sibling_status = 'ACTIVE')
        ORDER BY pend.created_at DESC`,
       [userId]
     );

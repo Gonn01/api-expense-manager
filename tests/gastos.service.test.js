@@ -541,6 +541,36 @@ describe("GastosService", () => {
         });
     });
 
+    describe("pagar un gasto compartido que la otra persona todavía no aprobó", () => {
+        const COPIA_PENDIENTE = { sibling_id: 20, counterparty_user_id: INTRUSO, sibling_status: "PENDING_APPROVAL" };
+
+        it("el pago directo busca también la copia pendiente y queda como pago pendiente", async () => {
+            gastosRepository.getSharedSibling.mockResolvedValue([COPIA_PENDIENTE]);
+
+            await service.settleQuota(10, OWNER, { direct: true });
+
+            expect(gastosRepository.getSharedSibling).toHaveBeenCalledWith(10, { includePendingApproval: true });
+            expect(movementsRepository.createGastoLog).toHaveBeenCalledWith(
+                10, "PENDING_PAYMENT", expect.anything(), expect.any(Date), OWNER,
+            );
+            expect(movementsRepository.createGastoLog).not.toHaveBeenCalledWith(
+                10, "PAYMENT", expect.anything(), expect.anything(),
+            );
+        });
+
+        it("al finalizar la sesión también queda como pago pendiente", async () => {
+            gastosRepository.getSharedSiblings.mockResolvedValue([{ purchase_id: 10, ...COPIA_PENDIENTE }]);
+
+            const { kept } = await service.effectSettlementBatch([10], OWNER);
+
+            expect(kept).toEqual([10]);
+            expect(gastosRepository.getSharedSiblings).toHaveBeenCalledWith(["10"], { includePendingApproval: true });
+            expect(movementsRepository.createGastoLogs).toHaveBeenCalledWith([
+                expect.objectContaining({ gastoId: 10, movementType: "PENDING_PAYMENT", createdByUserId: OWNER }),
+            ]);
+        });
+    });
+
     describe("crearGasto", () => {
         const crear = ({ number_of_quotas = 3, payed_quotas = 0, category_ids = [], postponed = false } = {}) =>
             service.crearGasto(7, "Netflix", 300, number_of_quotas, "ARS", false, null, "EGRESO", OWNER, payed_quotas, category_ids, null, postponed);
@@ -577,6 +607,18 @@ describe("GastosService", () => {
             expect(logsDelOriginal.filter((l) => l.movementType === "CREATION")).toEqual([
                 expect.objectContaining({ gastoId: 10 }),
             ]);
+        });
+
+        it("al compartir con cuotas ya pagas, las registra como pagos pendientes de confirmación", async () => {
+            entidadesFinancierasRepository.getById.mockResolvedValue([{ id: 7, user_id: OWNER, linked_user_id: INTRUSO }]);
+            gastosRepository.create = vi.fn(async (data) => [{ id: data.shared_from_id ? 11 : 10, ...data }]);
+
+            const [creado] = await crear({ payed_quotas: 2 });
+
+            const [logs] = movementsRepository.createGastoLogs.mock.calls[0];
+            expect(logs.map((l) => l.movementType)).toEqual(["CREATION", "PENDING_PAYMENT", "PENDING_PAYMENT"]);
+            expect(logs[1]).toMatchObject({ gastoId: 10, amount: 100, createdByUserId: OWNER });
+            expect(creado).toMatchObject({ payed_quotas: 0, pending_quotas: 2, last_payment_date: null });
         });
 
         it("devuelve las cuotas pagas reales del gasto creado", async () => {
