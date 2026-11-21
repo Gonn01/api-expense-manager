@@ -36,9 +36,5 @@
     "@vitest/coverage-v8": "^2.1.9",
     "eslint": "^9.28.0",
     "vitest": "^2.1.9"
-  },
-  "allowScripts": {
-    "bcrypt@6.0.0": true,
-    "esbuild@0.21.5": true
   }
 }
