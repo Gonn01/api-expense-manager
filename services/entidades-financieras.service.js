@@ -1,7 +1,11 @@
-import { MovementType } from "../utils/enums.js";
+import { MovementType, PusherEvent } from "../utils/enums.js";
 import { customError, ErrorCode } from "../utils/errors.js";
 import { logRed } from "../utils/logs_custom.js";
+import { triggerCompartidos } from "../utils/pusher.js";
 import { withTransaction, bestEffort } from "../db.js";
+
+const detalleDesvinculacion = ({ linked_user_name: name, linked_user_email: email }) =>
+  `Desvinculada de ${name && email ? `${name} (${email})` : (name ?? email ?? "un usuario")}`;
 
 export class EntidadesFinancierasService {
   constructor({
@@ -28,6 +32,24 @@ export class EntidadesFinancierasService {
       await bestEffort(() => this.movementsRepository.createEntidadLog(entidadId, type, detail));
     } catch (err) {
       logRed(`[historial entidad ${entidadId}] no se pudo registrar ${type}: ${err.message}`);
+    }
+  }
+
+  async #avisarVinculo(event, destinatarioId, actorId) {
+    try {
+      await bestEffort(async () => {
+        const [[actor], [entidadPropia]] = await Promise.all([
+          this.gastosRepository.getUserName(actorId),
+          this.entidadesFinancierasRepository.findByLinkedUser(destinatarioId, actorId),
+        ]);
+        await triggerCompartidos(destinatarioId, event, {
+          actorId,
+          actorName: actor?.name ?? null,
+          entityId: entidadPropia?.id ?? null,
+        });
+      });
+    } catch (err) {
+      logRed(`[notificaciones] no se pudo avisar ${event}: ${err.message}`);
     }
   }
 
@@ -140,6 +162,15 @@ export class EntidadesFinancierasService {
         session ? this.settlementRepository.removeItems(session.id, ids) : null,
       ]);
 
+      if (entidad.linked_user_id) {
+        await this.movementsRepository.createEntidadLog(
+          id,
+          MovementType.UNLINK,
+          detalleDesvinculacion(entidad),
+        );
+        await this.#avisarVinculo(PusherEvent.ENTIDAD_DESVINCULADA, entidad.linked_user_id, userId);
+      }
+
       return { ...deleted, deleted_purchase_ids: ids.map(String) };
     });
   }
@@ -170,6 +201,12 @@ export class EntidadesFinancierasService {
     const quien = linkedUser.email ? `${linkedUser.name} (${linkedUser.email})` : linkedUser.name;
     await this.#log(entityId, MovementType.LINK, `Vinculada a ${quien}`);
 
+    const anterior = entidad[0].linked_user_id;
+    if (anterior && String(anterior) !== String(linkedUser.id)) {
+      await this.#avisarVinculo(PusherEvent.ENTIDAD_DESVINCULADA, anterior, userId);
+    }
+    await this.#avisarVinculo(PusherEvent.ENTIDAD_VINCULADA, linkedUser.id, userId);
+
     return { ...updated[0], linked_user_name: linkedUser.name, linked_user_email: linkedUser.email };
   }
 
@@ -181,10 +218,8 @@ export class EntidadesFinancierasService {
     const updated = await this.entidadesFinancierasRepository.desvincularUsuario(entityId, userId);
 
     if (prev.linked_user_id) {
-      const quien = prev.linked_user_email
-        ? `${prev.linked_user_name} (${prev.linked_user_email})`
-        : (prev.linked_user_name ?? "un usuario");
-      await this.#log(entityId, MovementType.UNLINK, `Desvinculada de ${quien}`);
+      await this.#log(entityId, MovementType.UNLINK, detalleDesvinculacion(prev));
+      await this.#avisarVinculo(PusherEvent.ENTIDAD_DESVINCULADA, prev.linked_user_id, userId);
     }
 
     return updated[0];

@@ -7,6 +7,7 @@ import dashboardRoutes from "./dashboard.route.js"
 import gastosRoutes from "./gastos.routes.js";
 import categoriasRoutes from "./categorias.route.js";
 import compartidosRoutes from "./compartidos.routes.js";
+import notificacionesRoutes from "./notificaciones.routes.js";
 import settlementRoutes from "./settlement.routes.js";
 import { verifyToken } from "../middleware/verify_token.js";
 
@@ -20,7 +21,8 @@ router.use("/entidades-financieras", entidadesFinancierasRoutes);
 router.use("/dashboard", dashboardRoutes)
 router.use('/gastos', gastosRoutes);
 router.use('/categorias', categoriasRoutes);
-router.use('/compartidos', compartidosRoutes);
+router.use('/notificaciones/pendientes', compartidosRoutes);
+router.use('/notificaciones', notificacionesRoutes);
 router.use('/settlement', settlementRoutes);
 
 export default router;

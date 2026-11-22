@@ -11,6 +11,7 @@ export function computeEditLocks(gasto, { hasSibling = false, marked = false, ig
     const shared =
         !ignoreShared &&
         (hasSibling || Boolean(gasto.shared_from_id) || ESTADOS_SIN_ACEPTAR.has(gasto.status));
+    const conContraparte = !ignoreShared && (hasSibling || ESTADOS_SIN_ACEPTAR.has(gasto.status));
 
     const locks = {};
     const lock = (fields, reason) => {
@@ -23,6 +24,9 @@ export function computeEditLocks(gasto, { hasSibling = false, marked = false, ig
     }
     if (shared) {
         lock(ESTRUCTURA, "El gasto está compartido con otro usuario: el cambio no llegaría a su copia.");
+    }
+    if (conContraparte) {
+        lock(["name"], "El gasto está compartido con otro usuario: el cambio de nombre necesita su aprobación.");
     }
     if (ignoreShared) {
         lock(["financial_entity_id"], "Cada persona elige la entidad de su copia del gasto compartido.");

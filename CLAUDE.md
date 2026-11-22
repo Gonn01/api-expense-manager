@@ -64,7 +64,7 @@ repositories/gastos.repository.js → raw SQL via executeQuery from db.js
 
 There is no DI container/framework — factories instantiate everything by hand. When adding a resource, replicate this four-file structure rather than deviating from it.
 
-**Routing** (`routes/index.js`, mounted at `/api` in `index.js`): `/api/auth/*` and `/api/health` (DB ping: 200 or 503) are public; `verifyToken` middleware gates everything else. Resource groups: `/user`, `/entidades-financieras` (accounts/cards), `/dashboard`, `/gastos` (expenses — the core resource), `/categorias`, `/compartidos` (shared expenses between users), `/settlement` ("hacer cuentas" settlement sessions and their snapshots).
+**Routing** (`routes/index.js`, mounted at `/api` in `index.js`): `/api/auth/*` and `/api/health` (DB ping: 200 or 503) are public; `verifyToken` middleware gates everything else. Resource groups: `/user`, `/entidades-financieras` (accounts/cards), `/dashboard`, `/gastos` (expenses — the core resource), `/categorias`, `/notificaciones` (persisted notification feed, with shared-expense actions under `/notificaciones/pendientes`), `/settlement` ("hacer cuentas" settlement sessions and their snapshots).
 
 **Auth**: JWT via `middleware/verify_token.js` — verifies `Authorization: Bearer <jwt>` with `JWT_SECRET`, sets `req.session` (decoded payload, at least `userId`), 401 if the token is missing, invalid or expired (the signal both clients use to log the user out). 403 is reserved for an authenticated user without permission on the resource (`NO_AUTORIZADO`).
 
@@ -75,6 +75,8 @@ There is no DI container/framework — factories instantiate everything by hand.
 **Error handling**: `utils/errors.js` defines `CustomError`, an `ErrorCode` catalog (single source of truth: code → HTTP status + default Spanish message), and `customError(code, overrides)`. Services throw these instead of `throw new Error(...)`; a single `errorMiddleware` registered last in `index.js` translates them into JSON responses. Add new domain errors to the `CATALOG` rather than hand-rolling ad hoc errors.
 
 **Config**: `config/env.js` loads `.env` via `dotenv` and exports `JWT_SECRET`/`DATABASE_URL`/`BEAMS_INSTANCE_ID`/`BEAMS_SECRET_KEY` as named constants — other modules import these constants rather than reading `process.env` directly.
+
+**Notifications**: `triggerCompartidos` (`utils/pusher.js`) also stores every `PusherEvent` for its recipient in `notifications` after COMMIT, except the actor's own action (`utils/notifications.js`).
 
 **Push**: `triggerCompartidos` (`utils/pusher.js`) also sends an Android push through Pusher Beams (`utils/push-notifications.js`) after COMMIT. A new Pusher event needs its text in `utils/push-messages.js`.
 

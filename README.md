@@ -93,7 +93,7 @@ Los tests de `npm test` son unitarios y no necesitan una base: los de controller
 ```
 Cliente ──HTTP/JSON + JWT──► Express (/api) ──SQL──► PostgreSQL
    ▲                              │
-   │                              └──► Pusher Channels (canal compartidos-<userId>)
+   │                              └──► Pusher Channels (canal notificaciones-<userId>)
    └──────── eventos en tiempo real ◄──┘
 ```
 
@@ -107,7 +107,7 @@ services/<recurso>.service.js      reglas de negocio; lanza customError(ErrorCod
 repositories/<recurso>.repository.js SQL plano con executeQuery (db.js)
 ```
 
-- **Rutas** montadas en `/api`: `/auth` y `/health` son públicas; el middleware `verifyToken` protege `/user`, `/entidades-financieras`, `/dashboard`, `/gastos`, `/categorias`, `/compartidos` y `/settlement`.
+- **Rutas** montadas en `/api`: `/auth` y `/health` son públicas; el middleware `verifyToken` protege `/user`, `/entidades-financieras`, `/dashboard`, `/gastos`, `/categorias`, `/notificaciones` (con `/notificaciones/pendientes`) y `/settlement`.
 - **Autenticación**: JWT en `Authorization: Bearer <token>`. 401 si falta, es inválido o venció (los clientes cierran la sesión); 403 si el usuario no tiene permiso sobre el recurso.
 - **Errores**: catálogo único en `utils/errors.js` (código → status HTTP + mensaje en español). Un middleware final los convierte en respuestas JSON.
 - **Transacciones**: `withTransaction` sobre `AsyncLocalStorage`; las operaciones con más de una escritura corren en una transacción y las notificaciones de Pusher se envían recién después del commit.

@@ -4,7 +4,7 @@ import { UserRepository } from "../repositories/user.repository.js";
 import { buildPushMessage, isOwnPushAction } from "./push-messages.js";
 
 const ANDROID_CHANNEL_ID = "shared_activity";
-const OPEN_SHARED_ROUTE = "compartidos";
+const OPEN_SHARED_ROUTE = "notificaciones";
 
 const userRepository = new UserRepository();
 let client = null;

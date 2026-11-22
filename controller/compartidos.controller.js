@@ -129,10 +129,10 @@ export class CompartidosController {
         try {
             const { id } = req.params;
             const { userId } = req.session;
-            const { amount, currency_type, type, fixed_expense, number_of_quotas } = req.body ?? {};
+            const { name, amount, currency_type, type, fixed_expense, number_of_quotas } = req.body ?? {};
 
             const data = await this.compartidosService.solicitarEdicion(id, userId, {
-                amount, currency_type, type, fixed_expense, number_of_quotas,
+                name, amount, currency_type, type, fixed_expense, number_of_quotas,
             });
             res.json({ message: "Solicitud de edición enviada", data });
         } catch (err) {

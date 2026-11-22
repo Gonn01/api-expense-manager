@@ -95,4 +95,10 @@ export const PusherEvent = Object.freeze({
     EDICION_APROBADA: 'edicion.aprobada',
     EDICION_RECHAZADA: 'edicion.rechazada',
     EDICION_CANCELADA: 'edicion.cancelada',
+    ENTIDAD_VINCULADA: 'entidad.vinculada',
+    ENTIDAD_DESVINCULADA: 'entidad.desvinculada',
+    GASTO_POSTERGADO: 'gasto.postergado',
+    GASTO_POSTERGACION_QUITADA: 'gasto.postergacion_quitada',
 });
+
+export const NOTIFICACION_NUEVA_EVENT = 'notificacion.nueva';

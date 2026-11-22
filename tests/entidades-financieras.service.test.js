@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../db.js", () => ({ withTransaction: (fn) => fn(), bestEffort: (fn) => fn() }));
+vi.mock("../utils/pusher.js", () => ({ triggerCompartidos: vi.fn() }));
 
 const { EntidadesFinancierasService } = await import("../services/entidades-financieras.service.js");
+const { triggerCompartidos } = await import("../utils/pusher.js");
 
 const USER = 1;
 const ENTIDAD = 7;
@@ -20,14 +22,20 @@ describe("EntidadesFinancierasService: eliminar y restaurar en cascada", () => {
             getById: vi.fn(async () => [{ id: ENTIDAD, user_id: USER }]),
             delete: vi.fn(async () => [{ id: ENTIDAD }]),
             restaurar: vi.fn(async () => [{ id: ENTIDAD, deleted: false }]),
+            findByLinkedUser: vi.fn(async () => [{ id: 70 }]),
         };
+        vi.mocked(triggerCompartidos).mockClear();
         gastosRepository = {
+            getUserName: vi.fn(async () => [{ name: "Ana" }]),
             getIdsByEntidad: vi.fn(async () => [{ id: 10 }, { id: 11 }]),
             deleteByEntidad: vi.fn(async () => [{ id: 10 }, { id: 11 }]),
             restoreByEntidad: vi.fn(async () => [{ id: 10 }]),
             unlinkMany: vi.fn(async () => []),
         };
-        movementsRepository = { createGastoLogs: vi.fn(async () => []) };
+        movementsRepository = {
+            createGastoLogs: vi.fn(async () => []),
+            createEntidadLog: vi.fn(async () => []),
+        };
         settlementRepository = {
             getOpenSession: vi.fn(async () => ({ id: 99 })),
             removeItems: vi.fn(async () => []),
@@ -56,6 +64,48 @@ describe("EntidadesFinancierasService: eliminar y restaurar en cascada", () => {
         ]);
         expect(settlementRepository.removeItems).toHaveBeenCalledWith(99, [10, 11]);
         expect(result).toEqual({ id: ENTIDAD, deleted_purchase_ids: ["10", "11"] });
+    });
+
+    it("registra la desvinculación al eliminar una entidad vinculada", async () => {
+        entidadesFinancierasRepository.getById.mockResolvedValue([
+            {
+                id: ENTIDAD,
+                user_id: USER,
+                linked_user_id: 2,
+                linked_user_name: "Beto",
+                linked_user_email: "beto@test.com",
+            },
+        ]);
+
+        await service.eliminar(ENTIDAD, USER);
+
+        expect(movementsRepository.createEntidadLog).toHaveBeenCalledWith(
+            ENTIDAD,
+            "UNLINK",
+            "Desvinculada de Beto (beto@test.com)",
+        );
+        expect(entidadesFinancierasRepository.findByLinkedUser).toHaveBeenCalledWith(2, USER);
+        expect(triggerCompartidos).toHaveBeenCalledWith(2, "entidad.desvinculada", {
+            actorId: USER,
+            actorName: "Ana",
+            entityId: 70,
+        });
+    });
+
+    it("eliminar no falla si no se puede preparar el aviso", async () => {
+        entidadesFinancierasRepository.getById.mockResolvedValue([
+            { id: ENTIDAD, user_id: USER, linked_user_id: 2 },
+        ]);
+        gastosRepository.getUserName.mockRejectedValue(new Error("db"));
+
+        await expect(service.eliminar(ENTIDAD, USER)).resolves.toMatchObject({ id: ENTIDAD });
+        expect(triggerCompartidos).not.toHaveBeenCalled();
+    });
+
+    it("no registra desvinculación si la entidad no estaba vinculada", async () => {
+        await service.eliminar(ENTIDAD, USER);
+
+        expect(movementsRepository.createEntidadLog).not.toHaveBeenCalled();
     });
 
     it("no toca la sesión si no hay una abierta", async () => {

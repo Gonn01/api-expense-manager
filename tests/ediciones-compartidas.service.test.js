@@ -59,7 +59,7 @@ describe("EdicionesCompartidasService", () => {
             update: vi.fn(async (id) => [{ id }]),
             getUserName: vi.fn(async () => [{ name: "Ana" }]),
         };
-        movementsRepository = { createGastoLog: vi.fn() };
+        movementsRepository = { createGastoLog: vi.fn(), createEntidadLog: vi.fn() };
         settlementRepository = { getOpenSession: vi.fn(async () => null), hasItem: vi.fn(async () => false) };
         service = new EdicionesCompartidasService({
             edicionesRepository,
@@ -122,6 +122,46 @@ describe("EdicionesCompartidasService", () => {
             expect.objectContaining({ amount: 1500, financial_entity_id: 8 }),
         );
         expect(edicionesRepository.resolve).toHaveBeenCalledWith(5, "APPROVED", RECEPTOR);
+    });
+
+    it("pide el cambio de nombre sin modificar el gasto", async () => {
+        const result = await service.solicitar(10, EMISOR, { name: "  Almuerzo  " });
+
+        expect(result.changes).toEqual({ name: "Almuerzo" });
+        expect(gastosRepository.update).not.toHaveBeenCalled();
+        expect(movementsRepository.createGastoLog).toHaveBeenCalledWith(
+            10,
+            "EDIT_REQUESTED",
+            null,
+            null,
+            EMISOR,
+            'Nombre: "Cena" → "Almuerzo"',
+        );
+    });
+
+    it("rechaza un nombre vacío y no cuenta espacios como cambio", async () => {
+        await expect(service.solicitar(10, EMISOR, { name: "   " })).rejects.toMatchObject({
+            code: "VALIDATION_ERROR",
+        });
+        await expect(service.solicitar(10, EMISOR, { name: " Cena " })).rejects.toMatchObject({
+            code: "EDICION_SIN_CAMBIOS",
+        });
+    });
+
+    it("al aprobar un nombre lo aplica a los dos y lo registra en cada entidad", async () => {
+        edicionesRepository.getById.mockResolvedValue([{ ...PENDIENTE, changes: { name: "Almuerzo" } }]);
+
+        await service.aprobar(5, RECEPTOR);
+
+        expect(gastosRepository.update).toHaveBeenCalledWith(10, expect.objectContaining({ name: "Almuerzo" }));
+        expect(gastosRepository.update).toHaveBeenCalledWith(20, expect.objectContaining({ name: "Almuerzo" }));
+        for (const entidad of [7, 8]) {
+            expect(movementsRepository.createEntidadLog).toHaveBeenCalledWith(
+                entidad,
+                "EDITED",
+                'Gasto renombrado: "Cena" → "Almuerzo"',
+            );
+        }
     });
 
     it("quien pidió la edición no puede aprobarla, pero sí cancelarla", async () => {

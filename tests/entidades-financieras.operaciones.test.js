@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../db.js", () => ({ withTransaction: (fn) => fn(), bestEffort: (fn) => fn() }));
 vi.mock("../utils/logs_custom.js", () => ({ logRed: vi.fn() }));
+vi.mock("../utils/pusher.js", () => ({ triggerCompartidos: vi.fn() }));
 
 const { EntidadesFinancierasService } = await import("../services/entidades-financieras.service.js");
+const { triggerCompartidos } = await import("../utils/pusher.js");
 
 const USER = 1;
 const ENTIDAD = 7;
@@ -27,7 +29,9 @@ describe("EntidadesFinancierasService: operaciones", () => {
             vincularUsuario: vi.fn(async () => [entidad({ linked_user_id: 2 })]),
             desvincularUsuario: vi.fn(async () => [entidad({ linked_user_id: null })]),
         };
+        vi.mocked(triggerCompartidos).mockClear();
         gastosRepository = {
+            getUserName: vi.fn(async () => [{ name: "Yo" }]),
             getGastosByEntidad: vi.fn(async () => []),
             getPendingByEntidad: vi.fn(async () => []),
             getDeletedByEntidad: vi.fn(async () => []),
@@ -154,6 +158,20 @@ describe("EntidadesFinancierasService: operaciones", () => {
                 "LINK",
                 "Vinculada a Ana (ana@test.com)",
             );
+            expect(triggerCompartidos).toHaveBeenCalledWith(2, "entidad.vinculada", {
+                actorId: USER,
+                actorName: "Yo",
+                entityId: null,
+            });
+        });
+
+        it("avisa a la persona reemplazada al vincular a otra", async () => {
+            entidadesFinancierasRepository.getById.mockResolvedValue([entidad({ linked_user_id: 3 })]);
+
+            await service.vincularUsuario(ENTIDAD, USER, "ana@test.com");
+
+            expect(triggerCompartidos).toHaveBeenCalledWith(3, "entidad.desvinculada", expect.any(Object));
+            expect(triggerCompartidos).toHaveBeenCalledWith(2, "entidad.vinculada", expect.any(Object));
         });
 
         it("rechaza un email inexistente", async () => {
@@ -196,12 +214,14 @@ describe("EntidadesFinancierasService: operaciones", () => {
                 "UNLINK",
                 "Desvinculada de Ana (ana@test.com)",
             );
+            expect(triggerCompartidos).toHaveBeenCalledWith(2, "entidad.desvinculada", expect.any(Object));
         });
 
         it("no registra movimiento si no había nadie vinculado", async () => {
             await service.desvincularUsuario(ENTIDAD, USER);
 
             expect(movementsRepository.createEntidadLog).not.toHaveBeenCalled();
+            expect(triggerCompartidos).not.toHaveBeenCalled();
         });
     });
 });

@@ -8,6 +8,6 @@ describe("base de integración", () => {
         );
 
         expect(new URL(process.env.DATABASE_URL).hostname).toBe("127.0.0.1");
-        expect(rows[0].total).toBe(11);
+        expect(rows[0].total).toBe(12);
     });
 });

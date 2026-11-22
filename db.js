@@ -11,6 +11,7 @@ const connection = postgres(connectionString, {
     prepare: false,
 });
 
+const EFFECTS_TIMEOUT_MS = 5000;
 const txStorage = new AsyncLocalStorage();
 
 const currentSql = () => txStorage.getStore()?.sql ?? connection;
@@ -44,8 +45,22 @@ export async function withTransaction(fn) {
         txStorage.run({ sql, afterCommit: pending }, fn),
     );
 
-    pending.forEach((cb) => runEffect(cb));
+    await settleEffects(pending);
     return result;
+}
+
+async function settleEffects(effects) {
+    if (!effects.length) return;
+
+    let timer;
+    const timeout = new Promise((resolve) => {
+        timer = setTimeout(() => {
+            logRed(`[afterCommit] se respondió sin esperar más de ${EFFECTS_TIMEOUT_MS} ms`);
+            resolve();
+        }, EFFECTS_TIMEOUT_MS);
+    });
+    await Promise.race([Promise.all(effects.map(runEffect)), timeout]);
+    clearTimeout(timer);
 }
 
 async function runEffect(fn) {
@@ -58,10 +73,7 @@ async function runEffect(fn) {
 
 export function afterCommit(fn) {
     const store = txStorage.getStore();
-    if (!store) {
-        runEffect(fn);
-        return;
-    }
+    if (!store) return settleEffects([fn]);
     store.afterCommit.push(fn);
 }
 

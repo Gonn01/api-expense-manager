@@ -90,7 +90,7 @@ export class EntidadesFinancierasRepository {
     async delete(id, userId) {
         return await executeQuery(
             `UPDATE financial_entities
-             SET deleted = true
+             SET deleted = true, linked_user_id = NULL
              WHERE id = $1 AND user_id = $2
              RETURNING id`,
             [id, userId]

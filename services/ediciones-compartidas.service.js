@@ -1,8 +1,9 @@
 import { Currency, ExpenseStatus, ExpenseType, MovementType, PusherEvent } from "../utils/enums.js";
 import { customError, ErrorCode } from "../utils/errors.js";
 import { computeEditLocks } from "../utils/gasto-edit-locks.js";
+import { logRed } from "../utils/logs_custom.js";
 import { triggerCompartidos } from "../utils/pusher.js";
-import { withTransaction } from "../db.js";
+import { bestEffort, withTransaction } from "../db.js";
 import { MAX_INSTALLMENTS } from "./gastos.service.js";
 
 const invalid = (field, message) => customError(ErrorCode.VALIDATION_ERROR, { message, details: { field } });
@@ -60,6 +61,13 @@ export function normalizarCambios(input, gasto) {
     }
 
     const changes = {};
+    if (has("name")) {
+        if (typeof input.name !== "string" || !input.name.trim()) {
+            throw invalid("name", "El nombre del gasto es obligatorio.");
+        }
+        const name = input.name.trim();
+        if (name !== String(gasto.name ?? "").trim()) changes.name = name;
+    }
     if (amount !== Number(gasto.amount)) changes.amount = amount;
     if (currency_type !== gasto.currency_type) changes.currency_type = currency_type;
     if (type !== gasto.type) changes.type = type;
@@ -70,6 +78,7 @@ export function normalizarCambios(input, gasto) {
 
 export function describirCambios(changes, gasto) {
     const lineas = [];
+    if (changes.name) lineas.push(`Nombre: "${gasto.name}" → "${changes.name}"`);
     if (changes.amount !== undefined) lineas.push(`Monto: $${gasto.amount} → $${changes.amount}`);
     if (changes.currency_type) lineas.push(`Moneda: ${gasto.currency_type} → ${changes.currency_type}`);
     if (changes.type) lineas.push(`Tipo: ${tipoLabel(gasto.type)} → ${tipoLabel(changes.type)}`);
@@ -144,6 +153,21 @@ export class EdicionesCompartidasService {
                 this.movementsRepository.createGastoLog(gastoId, type, null, null, userId, detail),
             ),
         );
+    }
+
+    async #logRenombre(gasto, nuevoNombre) {
+        if (!nuevoNombre || !gasto.financial_entity_id || gasto.name === nuevoNombre) return;
+        try {
+            await bestEffort(() =>
+                this.movementsRepository.createEntidadLog(
+                    gasto.financial_entity_id,
+                    MovementType.EDITED,
+                    `Gasto renombrado: "${gasto.name}" → "${nuevoNombre}"`,
+                ),
+            );
+        } catch (err) {
+            logRed(`[historial entidad ${gasto.financial_entity_id}] no se pudo registrar el renombre: ${err.message}`);
+        }
     }
 
     async #pendiente(id) {
@@ -243,6 +267,8 @@ export class EdicionesCompartidasService {
                 this.#nombreDe(userId),
                 this.#logAmbos(request, MovementType.EDIT_APPROVED, userId, detail),
             ]);
+            await this.#logRenombre(gasto, request.changes.name);
+            await this.#logRenombre(copia, request.changes.name);
             const aviso = { actorId: userId, actorName, gastoName: gasto.name };
             await Promise.all([
                 triggerCompartidos(request.requested_by_user_id, PusherEvent.EDICION_APROBADA, {

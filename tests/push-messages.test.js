@@ -10,14 +10,14 @@ describe("buildPushMessage", () => {
 
     it("usa el idioma pedido", () => {
         expect(buildPushMessage(PusherEvent.PAGO_CONFIRMADO, { actorName: "Ana" }, "en")).toEqual({
-            title: "Shared",
+            title: "Notifications",
             body: "Ana confirmed your payment",
         });
     });
 
     it("usa español si el idioma no existe o no llegó", () => {
-        expect(buildPushMessage(PusherEvent.PAGO_CONFIRMADO, { actorName: "Ana" }, "fr").title).toBe("Compartidos");
-        expect(buildPushMessage(PusherEvent.PAGO_CONFIRMADO, { actorName: "Ana" }).title).toBe("Compartidos");
+        expect(buildPushMessage(PusherEvent.PAGO_CONFIRMADO, { actorName: "Ana" }, "fr").title).toBe("Notificaciones");
+        expect(buildPushMessage(PusherEvent.PAGO_CONFIRMADO, { actorName: "Ana" }).title).toBe("Notificaciones");
     });
 
     it("nombra a quien recibió el gasto al aprobarlo", () => {
@@ -45,7 +45,7 @@ describe("buildPushMessage", () => {
 
     it("usa el texto anónimo de un pago pendiente sin actor", () => {
         expect(buildPushMessage(PusherEvent.PAGO_PENDIENTE, {}, "es").body).toBe(
-            "Tenés un pago para confirmar en Compartidos",
+            "Tenés un pago para confirmar en Notificaciones",
         );
     });
 

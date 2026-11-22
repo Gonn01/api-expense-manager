@@ -86,6 +86,46 @@ describe("db: transacciones", () => {
         ).resolves.toBe("ok");
     });
 
+    it("withTransaction espera a que terminen los efectos antes de devolver", async () => {
+        let terminado = false;
+
+        await withTransaction(async () => {
+            afterCommit(async () => {
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                terminado = true;
+            });
+        });
+
+        expect(terminado).toBe(true);
+    });
+
+    it("afterCommit fuera de una transacción devuelve una promesa que espera al efecto", async () => {
+        let terminado = false;
+
+        await afterCommit(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            terminado = true;
+        });
+
+        expect(terminado).toBe(true);
+    });
+
+    it("un efecto colgado no retiene la respuesta más de 5 segundos", async () => {
+        vi.useFakeTimers();
+        try {
+            const resultado = withTransaction(async () => {
+                afterCommit(() => new Promise(() => {}));
+                return "ok";
+            });
+
+            await vi.advanceTimersByTimeAsync(5000);
+
+            await expect(resultado).resolves.toBe("ok");
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it("bestEffort corre en un savepoint dentro de una transacción", async () => {
         await withTransaction(async () => {
             await bestEffort(() => executeQuery("INSERT log"));

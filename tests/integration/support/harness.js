@@ -3,10 +3,11 @@ import jwt from "jsonwebtoken";
 import { executeQuery } from "../../../db.js";
 import routesIndex from "../../../routes/index.js";
 import { errorMiddleware } from "../../../utils/errors.js";
-import { sentEvents } from "./fake-pusher.js";
+import { sentEvents, settleNotifications } from "./fake-pusher.js";
 import { assertLocalDatabase } from "./postgres-local.js";
 
 const TABLES = [
+    "notifications",
     "purchase_edit_requests",
     "settlement_session_items",
     "settlement_snapshots",
@@ -40,6 +41,7 @@ export async function stopApi() {
 
 export async function resetDatabase() {
     assertLocalDatabase(process.env.DATABASE_URL);
+    await settleNotifications();
     await executeQuery(`TRUNCATE ${TABLES.join(", ")} RESTART IDENTITY CASCADE`);
     sentEvents.length = 0;
 }
@@ -102,7 +104,7 @@ export async function createSharedExpense(owner, receiver, overrides = {}) {
     const ownerExpense = await createExpense(owner, ownerEntity, overrides);
     const [copy] = await executeQuery("SELECT id FROM purchases WHERE shared_from_id = $1", [ownerExpense]);
     const copyId = Number(copy.id);
-    const approved = await receiver.post(`/compartidos/${copyId}/aprobar`, {
+    const approved = await receiver.post(`/notificaciones/pendientes/${copyId}/aprobar`, {
         new_entity_name: `De ${owner.email}`,
     });
     if (approved.status !== 200) throw new Error(`No se pudo aprobar: ${approved.status} ${approved.code}`);
@@ -132,4 +134,4 @@ export async function paidQuotas(user, purchaseId) {
     return Number(response.data.payed_quotas);
 }
 
-export { executeQuery, sentEvents };
+export { executeQuery, sentEvents, settleNotifications };

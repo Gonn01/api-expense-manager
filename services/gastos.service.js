@@ -39,6 +39,24 @@ export class GastosService {
         }
     }
 
+    async #avisarContraparte(gastoId, userId, event, data = {}) {
+        try {
+            await bestEffort(async () => {
+                const [sibling] = await this.gastosRepository.getSharedSibling(gastoId);
+                if (!sibling?.counterparty_user_id) return;
+                if (String(sibling.counterparty_user_id) === String(userId)) return;
+                await triggerCompartidos(sibling.counterparty_user_id, event, {
+                    gastoId: sibling.sibling_id,
+                    actorId: userId,
+                    actorName: await this.#nombreDe(userId),
+                    ...data,
+                });
+            });
+        } catch (err) {
+            logRed(`[notificaciones] no se pudo avisar ${event}: ${err.message}`);
+        }
+    }
+
     async requireSettlementSession(userId) {
         if (!this.settlementRepository) return null;
         if (!userId) throw customError(ErrorCode.SETTLEMENT_REQUIRED);
@@ -374,8 +392,10 @@ export class GastosService {
             const [mirror] = mirrorRows;
 
             const locks = this.#computeEditLocks(current, lockContext);
+            let mirrorNameLock = null;
             if (mirror) {
                 const mirrorLocks = await this.#editLocks(mirror, userId);
+                mirrorNameLock = mirrorLocks.name ?? null;
                 for (const [field, reason] of Object.entries(mirrorLocks)) {
                     if (field === "financial_entity_id") continue;
                     if (!locks[field]) locks[field] = `Movimiento vinculado: ${reason}`;
@@ -386,6 +406,7 @@ export class GastosService {
             const pending = Number(current.pending_quotas) || 0;
             const ambosFijos = base.fixed_expense && next.fixed_expense;
             const changed = {
+                name: next.name !== base.name.trim(),
                 amount: next.amount !== base.amount,
                 currency_type: next.currency_type !== base.currency_type,
                 type: next.type !== base.type,
@@ -403,6 +424,13 @@ export class GastosService {
                         details: { field },
                     });
                 }
+            }
+
+            if (mirrorNameLock && mirror.name !== next.name) {
+                throw customError(ErrorCode.GASTO_CAMPO_NO_EDITABLE, {
+                    message: `Movimiento vinculado: ${mirrorNameLock}`,
+                    details: { field: "name" },
+                });
             }
 
             if (!next.fixed_expense && next.number_of_quotas < paid + pending) {
@@ -876,6 +904,12 @@ export class GastosService {
                 type,
                 `${value ? "Postergación agregada" : "Postergación quitada"}: "${current.name}"`,
             ];
+            await this.#avisarContraparte(
+                id,
+                userId,
+                value ? PusherEvent.GASTO_POSTERGADO : PusherEvent.GASTO_POSTERGACION_QUITADA,
+                { gastoName: current.name },
+            );
             return row;
         });
 

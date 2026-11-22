@@ -983,10 +983,20 @@ describe("GastosService", () => {
             it("no deja cambiar el monto", () => rejectsLocked({ amount: 1 }, "amount"));
             it("no deja cambiar las cuotas", () => rejectsLocked({ number_of_quotas: 6 }, "number_of_quotas"));
 
-            it("deja cambiar el nombre", async () => {
-                await service.update(10, OWNER, { name: "Otro" });
+            it("no deja cambiar el nombre sin aprobación", () => rejectsLocked({ name: "Otro" }, "name"));
+
+            it("acepta el mismo nombre", async () => {
+                await service.update(10, OWNER, { name: "Netflix", category_ids: [1] });
                 expect(gastosRepository.update).toHaveBeenCalled();
             });
+        });
+
+        it("deja renombrar una copia que ya no tiene contraparte", async () => {
+            gasto = makeGasto({ payed_quotas: 0, shared_from_id: 9 });
+
+            await service.update(10, OWNER, { name: "Otro" });
+
+            expect(gastosRepository.update).toHaveBeenCalled();
         });
 
         describe("gasto marcado en la sesión de cuentas abierta", () => {
