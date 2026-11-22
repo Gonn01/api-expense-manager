@@ -26,6 +26,8 @@ When making a contract-changing change here, call out explicitly whether the web
 
 **Every change made in this repo must update, in the same change, whatever it leaves stale** in this repo's architecture guide, in the web repo's `docs\` and in this `CLAUDE.md`. `c:\Users\gonza\Desktop\web-plataformas-de-desarrollo\.claude\guides\documentacion.md` has the table of what to update for each kind of change — follow it. Document what the code actually does: a rule this API does not enforce is recorded as a known limitation, not as fulfilled.
 
+**Every time an endpoint is added, removed or changed** (method, path, query params, body, auth or response data its scripts read), update the Postman collection in the same change: `d:\proyectos_react\web-plataformas-de-desarrollo\postman\plataforma-gestion-deudas.postman_collection.json`. It must keep covering every route of this API.
+
 At the end of every task, state which documentation files were updated, or say explicitly that none needed updating and why.
 
 ## No code comments rule

@@ -140,4 +140,5 @@ Los de `tests/integration/` (`npm run test:integration`) prueban los flujos por 
 - [ ] Evento de Pusher si afecta a otro usuario.
 - [ ] Test del controller en `tests/`, y del service si agrega una regla de negocio o de pertenencia. La ruta nueva se agrega a `PROTECTED_ROUTES` en `tests/routes.authorization.test.js`.
 - [ ] **Clientes**: función en `src/services/api.js` de la web y provider + repository en Flutter; códigos de error en ambos catálogos.
+- [ ] **Postman**: agregar, modificar o quitar la request en `d:\proyectos_react\web-plataformas-de-desarrollo\postman\plataforma-gestion-deudas.postman_collection.json`. Vale para todo cambio de un endpoint, no solo para los nuevos.
 - [ ] **Documentación**: ver `.claude\guides\documentacion.md` en el repo de la web (`c:\Users\gonza\Desktop\web-plataformas-de-desarrollo`).
