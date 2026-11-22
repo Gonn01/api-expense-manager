@@ -14,6 +14,40 @@ import { withTransaction, bestEffort } from "../db.js";
 
 export const MAX_INSTALLMENTS = 360;
 const MAX_INSTALLMENTS_MESSAGE = `El máximo es de ${MAX_INSTALLMENTS} cuotas.`;
+
+const invalidField = (field, message) =>
+    customError(ErrorCode.VALIDATION_ERROR, { message, details: { field } });
+
+const toStrictNumber = (value) => {
+    if (typeof value === "number") return value;
+    if (typeof value === "string" && value.trim() !== "") return Number(value);
+    return Number.NaN;
+};
+
+const parseAmount = (value) => {
+    const amount = toStrictNumber(value);
+    if (!Number.isFinite(amount) || amount <= 0) {
+        throw invalidField("amount", "El monto debe ser un número mayor a 0.");
+    }
+    return amount;
+};
+
+const parseQuotas = (value, fixedExpense) => {
+    const quotas = toStrictNumber(value);
+    const minimum = fixedExpense ? 0 : 1;
+    if (!Number.isInteger(quotas) || quotas < minimum) {
+        throw invalidField(
+            "number_of_quotas",
+            fixedExpense
+                ? "La cantidad de cuotas no puede ser negativa."
+                : "La cantidad de cuotas debe ser un entero de 1 o más.",
+        );
+    }
+    if (!fixedExpense && quotas > MAX_INSTALLMENTS) {
+        throw invalidField("number_of_quotas", MAX_INSTALLMENTS_MESSAGE);
+    }
+    return quotas;
+};
 const ESTADOS_SIN_ACEPTAR = new Set([ExpenseStatus.REJECTED]);
 const ordenHistorial = (movement) => {
     if (movement.movement_type === MovementType.CREATION) return 0;
@@ -282,31 +316,23 @@ export class GastosService {
     }
 
     #normalizarUpdate(input, current) {
-        const invalid = (field, message) =>
-            customError(ErrorCode.VALIDATION_ERROR, { message, details: { field } });
         const has = (k) => input[k] !== undefined;
 
         let name = current.name;
         if (has("name")) {
             if (typeof input.name !== "string" || !input.name.trim()) {
-                throw invalid("name", "El nombre del gasto es obligatorio.");
+                throw invalidField("name", "El nombre del gasto es obligatorio.");
             }
             name = input.name.trim();
         }
 
-        let amount = Number(current.amount);
-        if (has("amount")) {
-            amount = Number(input.amount);
-            if (!Number.isFinite(amount) || amount <= 0) {
-                throw invalid("amount", "El monto debe ser mayor a 0.");
-            }
-        }
+        const amount = has("amount") ? parseAmount(input.amount) : Number(current.amount);
 
         let type = current.type;
         if (has("type")) {
             type = String(input.type).toUpperCase();
             if (!Object.values(ExpenseType).includes(type)) {
-                throw invalid("type", "El tipo del gasto es inválido.");
+                throw invalidField("type", "El tipo del gasto es inválido.");
             }
         }
 
@@ -314,7 +340,7 @@ export class GastosService {
         if (has("currency_type")) {
             currency_type = String(input.currency_type).toUpperCase();
             if (!Object.values(Currency).includes(currency_type)) {
-                throw invalid("currency_type", "La moneda es inválida.");
+                throw invalidField("currency_type", "La moneda es inválida.");
             }
         }
 
@@ -324,28 +350,23 @@ export class GastosService {
 
         let number_of_quotas = Number(current.number_of_quotas) || 0;
         if (has("number_of_quotas")) {
-            number_of_quotas = Number(input.number_of_quotas);
-            if (!Number.isInteger(number_of_quotas) || number_of_quotas < 0) {
-                throw invalid("number_of_quotas", "La cantidad de cuotas debe ser un entero positivo.");
-            }
-            if (!fixed_expense && number_of_quotas > MAX_INSTALLMENTS) {
-                throw invalid("number_of_quotas", MAX_INSTALLMENTS_MESSAGE);
-            }
+            number_of_quotas = parseQuotas(input.number_of_quotas, fixed_expense);
+        } else if (!fixed_expense && number_of_quotas < 1) {
+            number_of_quotas = 1;
         }
-        if (!fixed_expense && number_of_quotas < 1) number_of_quotas = 1;
 
         let payed_quotas;
         if (has("payed_quotas") && input.payed_quotas !== null) {
             payed_quotas = Number(input.payed_quotas);
             if (!Number.isInteger(payed_quotas) || payed_quotas < 0) {
-                throw invalid("payed_quotas", "Las cuotas pagadas deben ser un entero positivo.");
+                throw invalidField("payed_quotas", "Las cuotas pagadas deben ser un entero positivo.");
             }
         }
 
         let financial_entity_id = current.financial_entity_id;
         if (has("financial_entity_id") && input.financial_entity_id !== null) {
             if (!/^\d+$/.test(String(input.financial_entity_id))) {
-                throw invalid("financial_entity_id", "La entidad es inválida.");
+                throw invalidField("financial_entity_id", "La entidad es inválida.");
             }
             financial_entity_id = Number(input.financial_entity_id);
         }
@@ -353,7 +374,7 @@ export class GastosService {
         let category_ids;
         if (has("category_ids") && input.category_ids !== null) {
             if (!Array.isArray(input.category_ids)) {
-                throw invalid("category_ids", "Las categorías son inválidas.");
+                throw invalidField("category_ids", "Las categorías son inválidas.");
             }
             category_ids = input.category_ids;
         }
@@ -803,12 +824,11 @@ export class GastosService {
         payment_entity_id = null,
         postponed = false
     ) {
-        if (!fixed_expense && Number(number_of_quotas) > MAX_INSTALLMENTS) {
-            throw customError(ErrorCode.VALIDATION_ERROR, {
-                message: MAX_INSTALLMENTS_MESSAGE,
-                details: { field: "number_of_quotas" },
-            });
-        }
+        fixed_expense = fixed_expense === true || fixed_expense === "true";
+        amount = parseAmount(amount);
+        number_of_quotas = fixed_expense && number_of_quotas == null
+            ? 1
+            : parseQuotas(number_of_quotas, fixed_expense);
 
         if (postponed && this.#isFullyPaid({ fixed_expense, payed_quotas, number_of_quotas })) {
             throw customError(ErrorCode.GASTO_PAGADO_NO_POSTERGABLE);

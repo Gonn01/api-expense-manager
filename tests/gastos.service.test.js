@@ -794,6 +794,55 @@ describe("GastosService", () => {
             categoriasRepository.addCategoriasToNewGasto = vi.fn(async (_, ids) => ids.map((id) => ({ id, name: `c${id}` })));
         });
 
+        const crearCon = ({ amount = 300, number_of_quotas = 3, fixed_expense = false } = {}) =>
+            service.crearGasto(7, "Netflix", amount, number_of_quotas, "ARS", fixed_expense, null, "EGRESO", OWNER);
+
+        it.each([
+            [{ amount: 0 }, "amount"],
+            [{ amount: -100 }, "amount"],
+            [{ amount: "abc" }, "amount"],
+            [{ amount: "  " }, "amount"],
+            [{ amount: true }, "amount"],
+            [{ amount: Number.POSITIVE_INFINITY }, "amount"],
+            [{ number_of_quotas: 0 }, "number_of_quotas"],
+            [{ number_of_quotas: -2 }, "number_of_quotas"],
+            [{ number_of_quotas: 1.5 }, "number_of_quotas"],
+            [{ number_of_quotas: "abc" }, "number_of_quotas"],
+            [{ number_of_quotas: null }, "number_of_quotas"],
+            [{ number_of_quotas: 361 }, "number_of_quotas"],
+            [{ number_of_quotas: 0, fixed_expense: "false" }, "number_of_quotas"],
+            [{ number_of_quotas: -1, fixed_expense: true }, "number_of_quotas"],
+        ])("rechaza %o con 400 sin guardar nada", async (input, field) => {
+            await expect(crearCon(input)).rejects.toMatchObject({
+                code: "VALIDATION_ERROR",
+                status: 400,
+                details: { field },
+            });
+
+            expect(entidadesFinancierasRepository.getById).not.toHaveBeenCalled();
+            expect(gastosRepository.create).not.toHaveBeenCalled();
+            expect(movementsRepository.createGastoLogs).not.toHaveBeenCalled();
+        });
+
+        it("convierte a número el monto y las cuotas que llegan como texto", async () => {
+            await crearCon({ amount: "300.50", number_of_quotas: "3" });
+
+            expect(gastosRepository.create).toHaveBeenCalledWith(
+                expect.objectContaining({ amount: 300.5, number_of_quotas: 3 }),
+            );
+        });
+
+        it.each([
+            [0, 0],
+            [undefined, 1],
+        ])("un gasto fijo con cuotas %s se guarda con %s", async (number_of_quotas, esperado) => {
+            await service.crearGasto(7, "Netflix", 300, number_of_quotas, "ARS", true, null, "EGRESO", OWNER);
+
+            expect(gastosRepository.create).toHaveBeenCalledWith(
+                expect.objectContaining({ fixed_expense: true, number_of_quotas: esperado }),
+            );
+        });
+
         it("registra la creación y las cuotas pagas en una sola inserción", async () => {
             await crear({ payed_quotas: 2 });
 
@@ -1015,10 +1064,13 @@ describe("GastosService", () => {
             [{ name: "  " }, "name"],
             [{ amount: -5 }, "amount"],
             [{ amount: "abc" }, "amount"],
+            [{ amount: 0 }, "amount"],
             [{ type: "OTRO" }, "type"],
             [{ currency_type: "XXX" }, "currency_type"],
             [{ number_of_quotas: 1.5 }, "number_of_quotas"],
             [{ number_of_quotas: 361 }, "number_of_quotas"],
+            [{ number_of_quotas: 0 }, "number_of_quotas"],
+            [{ number_of_quotas: -1 }, "number_of_quotas"],
         ])("rechaza %o con VALIDATION_ERROR sin modificar nada", async (input, field) => {
             await expect(service.update(10, OWNER, input)).rejects.toMatchObject({
                 code: "VALIDATION_ERROR",

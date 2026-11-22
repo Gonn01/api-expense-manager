@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GastosController } from "../controller/gastos.controller.js";
+import { customError, ErrorCode } from "../utils/errors.js";
 
 function makeRes() {
     const res = {};
@@ -91,6 +92,26 @@ describe("GastosController", () => {
 
             expect(res.status).toHaveBeenCalledWith(400);
             expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: "Faltan campos obligatorios", code: "VALIDATION_ERROR" }));
+        });
+
+        it("con monto 0 no responde 'faltan campos': delega la validación en el servicio", async () => {
+            const req = makeReq({ body: { ...validBody, amount: 0 } });
+            const res = makeRes();
+            service.crearGasto.mockRejectedValue(
+                customError(ErrorCode.VALIDATION_ERROR, {
+                    message: "El monto debe ser un número mayor a 0.",
+                    details: { field: "amount" },
+                }),
+            );
+
+            await controller.crear(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(res.json).toHaveBeenCalledWith({
+                error: "El monto debe ser un número mayor a 0.",
+                code: "VALIDATION_ERROR",
+                details: { field: "amount" },
+            });
         });
 
         it("responde 500 cuando el servicio lanza un error", async () => {
