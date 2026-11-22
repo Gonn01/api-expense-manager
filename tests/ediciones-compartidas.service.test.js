@@ -124,6 +124,31 @@ describe("EdicionesCompartidasService", () => {
         expect(edicionesRepository.resolve).toHaveBeenCalledWith(5, "APPROVED", RECEPTOR);
     });
 
+    it("al aprobar un cambio de tipo deja a cada parte con el tipo opuesto", async () => {
+        edicionesRepository.getById.mockResolvedValue([{ ...PENDIENTE, changes: { type: "INGRESO" } }]);
+        gastosRepository.getById.mockImplementation(async (id) => [
+            Number(id) === 10 ? GASTO : { ...COPIA, type: "INGRESO" },
+        ]);
+
+        await service.aprobar(5, RECEPTOR);
+
+        expect(gastosRepository.update).toHaveBeenCalledWith(10, expect.objectContaining({ type: "INGRESO" }));
+        expect(gastosRepository.update).toHaveBeenCalledWith(20, expect.objectContaining({ type: "EGRESO" }));
+        expect(movementsRepository.createGastoLog).toHaveBeenCalledWith(
+            20, "EDIT_APPROVED", null, null, RECEPTOR, "Tipo: Ingreso → Egreso",
+        );
+    });
+
+    it("muestra el cambio de tipo desde el punto de vista de quien debe aprobarlo", async () => {
+        edicionesRepository.getPendingForUser.mockResolvedValue([
+            { ...PENDIENTE, requested_by_user_id: EMISOR, changes: { type: "INGRESO" } },
+        ]);
+
+        const { porConfirmar } = await service.listar(RECEPTOR);
+
+        expect(porConfirmar[0].changes).toEqual({ type: "EGRESO" });
+    });
+
     it("pide el cambio de nombre sin modificar el gasto", async () => {
         const result = await service.solicitar(10, EMISOR, { name: "  Almuerzo  " });
 

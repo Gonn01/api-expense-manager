@@ -71,6 +71,9 @@ export const ExpenseType = Object.freeze({
     INGRESO: 'INGRESO',
 });
 
+export const oppositeExpenseType = (type) =>
+    String(type).toUpperCase() === ExpenseType.INGRESO ? ExpenseType.EGRESO : ExpenseType.INGRESO;
+
 export const ExpenseStatus = Object.freeze({
     ACTIVE: 'ACTIVE',
     PENDING_APPROVAL: 'PENDING_APPROVAL',

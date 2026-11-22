@@ -764,6 +764,20 @@ describe("GastosService", () => {
             expect(gastosRepository.create).not.toHaveBeenCalled();
         });
 
+        it.each([
+            ["EGRESO", "INGRESO"],
+            ["INGRESO", "EGRESO"],
+        ])("al compartir un %s de una entidad vinculada, la copia queda como %s", async (tipo, opuesto) => {
+            gasto = makeGasto({ status: "ACTIVE", type: tipo });
+
+            await service.compartir(10, OWNER);
+
+            expect(gastosRepository.create).toHaveBeenCalledWith(
+                expect.objectContaining({ shared_from_id: 10, type: opuesto }),
+            );
+            expect(gastosRepository.update).not.toHaveBeenCalled();
+        });
+
         it("el detalle indica si se puede compartir y con quién", async () => {
             const detalle = await service.getById(10, OWNER);
 
@@ -797,7 +811,12 @@ describe("GastosService", () => {
             await crear();
 
             expect(gastosRepository.create).toHaveBeenCalledWith(
-                expect.objectContaining({ shared_from_id: 10, receiver_user_id: INTRUSO, status: "PENDING_APPROVAL" }),
+                expect.objectContaining({
+                    shared_from_id: 10,
+                    receiver_user_id: INTRUSO,
+                    status: "PENDING_APPROVAL",
+                    type: "INGRESO",
+                }),
             );
             const creationsDeLaCopia = movementsRepository.createGastoLog.mock.calls.filter(
                 ([gastoId, type]) => gastoId === 11 && type === "CREATION",

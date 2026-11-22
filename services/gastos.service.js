@@ -1,4 +1,11 @@
-import { MovementType, ExpenseStatus, ExpenseType, Currency, PusherEvent } from "../utils/enums.js";
+import {
+    MovementType,
+    ExpenseStatus,
+    ExpenseType,
+    Currency,
+    PusherEvent,
+    oppositeExpenseType,
+} from "../utils/enums.js";
 import { triggerCompartidos } from "../utils/pusher.js";
 import { customError, ErrorCode } from "../utils/errors.js";
 import { computeEditLocks } from "../utils/gasto-edit-locks.js";
@@ -674,7 +681,7 @@ export class GastosService {
                 currency_type: gasto.currency_type,
                 fixed_expense: gasto.fixed_expense,
                 image_url: gasto.image_url,
-                type: gasto.type,
+                type: oppositeExpenseType(gasto.type),
                 status: ExpenseStatus.PENDING_APPROVAL,
                 shared_from_id: gasto.id,
                 receiver_user_id: entidad.linked_user_id,
@@ -854,7 +861,7 @@ export class GastosService {
                     currency_type,
                     fixed_expense,
                     image_url,
-                    type,
+                    type: oppositeExpenseType(type),
                     status: ExpenseStatus.PENDING_APPROVAL,
                     shared_from_id: gastoId,
                     receiver_user_id: entidad[0].linked_user_id,

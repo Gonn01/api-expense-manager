@@ -1,4 +1,11 @@
-import { Currency, ExpenseStatus, ExpenseType, MovementType, PusherEvent } from "../utils/enums.js";
+import {
+    Currency,
+    ExpenseStatus,
+    ExpenseType,
+    MovementType,
+    oppositeExpenseType,
+    PusherEvent,
+} from "../utils/enums.js";
 import { customError, ErrorCode } from "../utils/errors.js";
 import { computeEditLocks } from "../utils/gasto-edit-locks.js";
 import { logRed } from "../utils/logs_custom.js";
@@ -24,6 +31,10 @@ function modoLabel(fixed, quotas) {
 
 function tipoLabel(type) {
     return type === ExpenseType.INGRESO ? "Ingreso" : "Egreso";
+}
+
+export function cambiosParaContraparte(changes) {
+    return changes.type ? { ...changes, type: oppositeExpenseType(changes.type) } : changes;
 }
 
 export function normalizarCambios(input, gasto) {
@@ -147,12 +158,20 @@ export class EdicionesCompartidasService {
         }
     }
 
-    #logAmbos(request, type, userId, detail = null) {
-        return Promise.all(
-            [request.purchase_id, request.sibling_purchase_id].map((gastoId) =>
-                this.movementsRepository.createGastoLog(gastoId, type, null, null, userId, detail),
-            ),
-        );
+    #logAmbos(request, changes, type, userId, gasto, copia) {
+        const detalleGasto = gasto ? describirCambios(changes, gasto) : null;
+        const detalleCopia = copia ? describirCambios(cambiosParaContraparte(changes), copia) : null;
+        return Promise.all([
+            this.movementsRepository.createGastoLog(request.purchase_id, type, null, null, userId, detalleGasto),
+            this.movementsRepository.createGastoLog(request.sibling_purchase_id, type, null, null, userId, detalleCopia),
+        ]);
+    }
+
+    #gastoYCopia(request) {
+        return Promise.all([
+            this.gastosRepository.getById(request.purchase_id),
+            this.gastosRepository.getById(request.sibling_purchase_id),
+        ]);
     }
 
     async #logRenombre(gasto, nuevoNombre) {
@@ -197,7 +216,7 @@ export class EdicionesCompartidasService {
         for (const row of rows) {
             const item = { ...row, changes: parseChanges(row.changes) };
             if (String(row.requested_by_user_id) === String(userId)) ediciones.esperando.push(item);
-            else ediciones.porConfirmar.push(item);
+            else ediciones.porConfirmar.push({ ...item, changes: cambiosParaContraparte(item.changes) });
         }
         return ediciones;
     }
@@ -236,7 +255,7 @@ export class EdicionesCompartidasService {
             });
             const [actorName] = await Promise.all([
                 this.#nombreDe(userId),
-                this.#logAmbos(request, MovementType.EDIT_REQUESTED, userId, describirCambios(changes, gasto)),
+                this.#logAmbos(request, changes, MovementType.EDIT_REQUESTED, userId, gasto, copia),
             ]);
             await triggerCompartidos(sibling.counterparty_user_id, PusherEvent.EDICION_SOLICITADA, {
                 purchaseId: copia.id,
@@ -250,22 +269,18 @@ export class EdicionesCompartidasService {
     async aprobar(id, userId) {
         return this.tx(async () => {
             const request = await this.#pendienteBloqueada(id, this.#assertContraparte(userId));
-            const [[gasto], [copia]] = await Promise.all([
-                this.gastosRepository.getById(request.purchase_id),
-                this.gastosRepository.getById(request.sibling_purchase_id),
-            ]);
+            const [[gasto], [copia]] = await this.#gastoYCopia(request);
             if (!gasto || !copia) throw customError(ErrorCode.GASTO_NOT_FOUND);
 
             await this.#assertAplicable(request.changes, gasto, request.requested_by_user_id);
             await this.#assertAplicable(request.changes, copia, request.counterparty_user_id);
 
-            const detail = describirCambios(request.changes, gasto);
             const [resolved, , , actorName] = await Promise.all([
                 this.edicionesRepository.resolve(request.id, "APPROVED", userId),
                 this.gastosRepository.update(gasto.id, { ...gasto, ...request.changes }),
-                this.gastosRepository.update(copia.id, { ...copia, ...request.changes }),
+                this.gastosRepository.update(copia.id, { ...copia, ...cambiosParaContraparte(request.changes) }),
                 this.#nombreDe(userId),
-                this.#logAmbos(request, MovementType.EDIT_APPROVED, userId, detail),
+                this.#logAmbos(request, request.changes, MovementType.EDIT_APPROVED, userId, gasto, copia),
             ]);
             await this.#logRenombre(gasto, request.changes.name);
             await this.#logRenombre(copia, request.changes.name);
@@ -287,16 +302,11 @@ export class EdicionesCompartidasService {
     async rechazar(id, userId) {
         return this.tx(async () => {
             const request = await this.#pendienteBloqueada(id, this.#assertContraparte(userId));
-            const [[gasto]] = await Promise.all([this.gastosRepository.getById(request.purchase_id)]);
+            const [[gasto], [copia]] = await this.#gastoYCopia(request);
             const [resolved, actorName] = await Promise.all([
                 this.edicionesRepository.resolve(request.id, "REJECTED", userId),
                 this.#nombreDe(userId),
-                this.#logAmbos(
-                    request,
-                    MovementType.EDIT_REJECTED,
-                    userId,
-                    gasto ? describirCambios(request.changes, gasto) : null,
-                ),
+                this.#logAmbos(request, request.changes, MovementType.EDIT_REJECTED, userId, gasto, copia),
             ]);
             await triggerCompartidos(request.requested_by_user_id, PusherEvent.EDICION_RECHAZADA, {
                 purchaseId: request.purchase_id,
@@ -312,16 +322,11 @@ export class EdicionesCompartidasService {
             const request = await this.#pendienteBloqueada(id, (r) => {
                 if (String(r.requested_by_user_id) !== String(userId)) throw customError(ErrorCode.NO_AUTORIZADO);
             });
-            const [[gasto]] = await Promise.all([this.gastosRepository.getById(request.purchase_id)]);
+            const [[gasto], [copia]] = await this.#gastoYCopia(request);
             const [resolved, actorName] = await Promise.all([
                 this.edicionesRepository.resolve(request.id, "CANCELLED", userId),
                 this.#nombreDe(userId),
-                this.#logAmbos(
-                    request,
-                    MovementType.EDIT_CANCELLED,
-                    userId,
-                    gasto ? describirCambios(request.changes, gasto) : null,
-                ),
+                this.#logAmbos(request, request.changes, MovementType.EDIT_CANCELLED, userId, gasto, copia),
             ]);
             await triggerCompartidos(request.counterparty_user_id, PusherEvent.EDICION_CANCELADA, {
                 purchaseId: request.sibling_purchase_id,

@@ -70,7 +70,7 @@ export class EdicionesCompartidasRepository {
                     p.name AS gasto_name,
                     p.amount,
                     p.currency_type,
-                    p.type,
+                    CASE WHEN r.requested_by_user_id = $1 THEN p.type ELSE sib.type END AS type,
                     p.fixed_expense,
                     p.number_of_quotas,
                     requester.name AS requester_name,
