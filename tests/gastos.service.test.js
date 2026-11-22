@@ -72,6 +72,8 @@ describe("GastosService", () => {
             getMovementsByGasto: vi.fn(async () => [
                 { id: 500, movement_type: "PAYMENT", amount: 100, payment_date: "2026-10-01", created_at: "2026-10-01" },
             ]),
+            getReceivedPayments: vi.fn(async () => []),
+            getSharedSentEvent: vi.fn(async () => []),
             createGastoLog: vi.fn(async (gastoId, movementType) => [{ id: 800, purchase_id: gastoId, movement_type: movementType }]),
             setPairedMovement: vi.fn(),
             setPairedMovements: vi.fn(),
@@ -293,6 +295,20 @@ describe("GastosService", () => {
             gasto = makeGasto({ status: "PENDING_APPROVAL" });
             gastosRepository.getSharedSibling.mockResolvedValue([COPIA_PENDIENTE]);
             gastosRepository.getSharedSiblings.mockResolvedValue([{ purchase_id: 10, ...COPIA_PENDIENTE }]);
+        });
+
+        it("explica que el nombre no se puede cambiar hasta que el gasto esté aceptado", async () => {
+            await expect(service.update(10, OWNER, { name: "Otro nombre" })).rejects.toMatchObject({
+                code: "GASTO_CAMPO_NO_EDITABLE",
+                message: expect.stringMatching(/todavía no está aceptado/),
+                details: { field: "name" },
+            });
+        });
+
+        it("no toma como cambio de nombre un guardado que no lo toca aunque tenga espacios al final", async () => {
+            gasto = makeGasto({ status: "PENDING_APPROVAL", name: "Alquiler " });
+
+            await expect(service.update(10, OWNER, { image_url: null })).resolves.toBeDefined();
         });
 
         it("el pago directo busca también la copia pendiente y queda como pago pendiente", async () => {
@@ -1146,6 +1162,47 @@ describe("GastosService", () => {
             expect(detalle.movements).toEqual([{ id: 1, movement_type: "EDITED" }]);
             expect(detalle.categories).toEqual([{ id: 1, name: "Casa" }]);
             expect(detalle.edit_locks).toMatchObject({ payed_quotas: expect.any(String) });
+        });
+
+        it("suma al historial los pagos recibidos de la otra persona, ordenados por fecha", async () => {
+            gasto = makeGasto({ status: "ACTIVE" });
+            gastosRepository.getById.mockImplementation(async () => [gasto]);
+            gastosRepository.getSharedSibling.mockResolvedValue([
+                { sibling_id: 20, counterparty_user_id: 2, counterparty_name: "María", sibling_status: "ACTIVE" },
+            ]);
+            movementsRepository.getMovementsByGasto.mockResolvedValue([
+                { id: 3, movement_type: "EDITED", created_at: "2026-11-03T10:00:00" },
+                { id: 1, movement_type: "CREATION", created_at: "2026-11-01T10:00:00" },
+            ]);
+            movementsRepository.getReceivedPayments.mockResolvedValue([
+                { id: 40, movement_type: "PAYMENT_RECEIVED", created_at: "2026-11-02T10:00:00" },
+            ]);
+
+            const detalle = await service.getById(10, OWNER);
+
+            expect(movementsRepository.getReceivedPayments).toHaveBeenCalledWith(20, OWNER, true);
+            expect(detalle.movements.map((m) => m.id)).toEqual([3, 40, 1]);
+        });
+
+        it("muestra el evento de compartido después de la creación y sin la línea vieja", async () => {
+            gastosRepository.getSharedState.mockResolvedValue([{ was_shared: true, sibling_id: 20 }]);
+            movementsRepository.getMovementsByGasto.mockResolvedValue([
+                { id: 3, movement_type: "EDITED", detail: "Compartido con María", created_at: "2026-11-02T10:00:00" },
+                { id: 1, movement_type: "CREATION", created_at: "2026-11-01T10:00:00" },
+            ]);
+            movementsRepository.getSharedSentEvent.mockResolvedValue([
+                { id: -9, movement_type: "SHARED_SENT", created_at: "2026-11-01T10:00:00" },
+            ]);
+
+            const detalle = await service.getById(10, OWNER);
+
+            expect(detalle.movements.map((m) => m.id)).toEqual([-9, 1]);
+        });
+
+        it("no busca pagos recibidos en un gasto sin contraparte", async () => {
+            await service.getById(10, OWNER);
+
+            expect(movementsRepository.getReceivedPayments).not.toHaveBeenCalled();
         });
 
         it("no reescribe las categorías si no cambiaron", async () => {

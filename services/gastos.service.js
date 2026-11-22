@@ -8,6 +8,10 @@ import { withTransaction, bestEffort } from "../db.js";
 export const MAX_INSTALLMENTS = 360;
 const MAX_INSTALLMENTS_MESSAGE = `El máximo es de ${MAX_INSTALLMENTS} cuotas.`;
 const ESTADOS_SIN_ACEPTAR = new Set([ExpenseStatus.REJECTED]);
+const ordenHistorial = (movement) => {
+    if (movement.movement_type === MovementType.CREATION) return 0;
+    return movement.movement_type === "SHARED_SENT" ? 1 : 2;
+};
 
 export class GastosService {
     constructor({
@@ -186,8 +190,19 @@ export class GastosService {
         if (!gasto) return null;
 
         const sibling = siblings?.[0];
-        const [pendingEdit] =
-            sibling && this.edicionesRepository ? await this.edicionesRepository.getPendingByPurchase(id) : [];
+        const [pendingEdit, received, sharedSent] = await Promise.all([
+            sibling && this.edicionesRepository
+                ? this.edicionesRepository.getPendingByPurchase(id).then(([edit]) => edit)
+                : null,
+            sibling
+                ? this.movementsRepository.getReceivedPayments(
+                      sibling.sibling_id,
+                      userId,
+                      gasto.status === ExpenseStatus.ACTIVE,
+                  )
+                : [],
+            sharedState?.[0]?.was_shared ? this.movementsRepository.getSharedSentEvent(id) : [],
+        ]);
 
         let editLocks = null;
         let sharedEditLocks = null;
@@ -200,7 +215,20 @@ export class GastosService {
             }
         }
 
-        gasto.movements = movements;
+        const propios = sharedSent.length
+            ? movements.filter(
+                  (m) => !(m.movement_type === MovementType.EDITED && m.detail?.startsWith("Compartido con ")),
+              )
+            : movements;
+        const derivados = [...received, ...sharedSent];
+        gasto.movements = derivados.length
+            ? [...propios, ...derivados].sort(
+                  (a, b) =>
+                      new Date(b.created_at) - new Date(a.created_at) ||
+                      ordenHistorial(b) - ordenHistorial(a) ||
+                      b.id - a.id,
+              )
+            : propios;
         gasto.categories = categories;
         gasto.edit_locks = editLocks;
         gasto.shared_edit_locks = sharedEditLocks;
@@ -406,7 +434,7 @@ export class GastosService {
             const pending = Number(current.pending_quotas) || 0;
             const ambosFijos = base.fixed_expense && next.fixed_expense;
             const changed = {
-                name: next.name !== base.name.trim(),
+                name: next.name.trim() !== base.name.trim(),
                 amount: next.amount !== base.amount,
                 currency_type: next.currency_type !== base.currency_type,
                 type: next.type !== base.type,
@@ -426,7 +454,7 @@ export class GastosService {
                 }
             }
 
-            if (mirrorNameLock && mirror.name !== next.name) {
+            if (mirrorNameLock && mirror.name.trim() !== next.name.trim()) {
                 throw customError(ErrorCode.GASTO_CAMPO_NO_EDITABLE, {
                     message: `Movimiento vinculado: ${mirrorNameLock}`,
                     details: { field: "name" },
@@ -657,9 +685,6 @@ export class GastosService {
             const receptor = entidad.linked_user_name ?? entidad.linked_user_email ?? "otro usuario";
             await Promise.all([
                 this.gastosRepository.updateStatus(gasto.id, ExpenseStatus.PENDING_APPROVAL),
-                this.movementsRepository.createGastoLog(
-                    gasto.id, MovementType.EDITED, null, null, userId, `Compartido con ${receptor}`,
-                ),
                 session ? this.settlementRepository.removeItem(session.id, gasto.id) : null,
             ]);
             await this.#logEntidad(

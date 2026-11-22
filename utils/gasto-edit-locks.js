@@ -26,7 +26,12 @@ export function computeEditLocks(gasto, { hasSibling = false, marked = false, ig
         lock(ESTRUCTURA, "El gasto está compartido con otro usuario: el cambio no llegaría a su copia.");
     }
     if (conContraparte) {
-        lock(["name"], "El gasto está compartido con otro usuario: el cambio de nombre necesita su aprobación.");
+        lock(
+            ["name"],
+            gasto.status === ExpenseStatus.ACTIVE
+                ? "El gasto está compartido con otro usuario: el nombre se cambia con una solicitud de edición."
+                : "El gasto compartido todavía no está aceptado: no se puede cambiar el nombre hasta que lo esté.",
+        );
     }
     if (ignoreShared) {
         lock(["financial_entity_id"], "Cada persona elige la entidad de su copia del gasto compartido.");

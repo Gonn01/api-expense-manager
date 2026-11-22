@@ -23,6 +23,40 @@ export class MovementsRepository {
         );
     }
 
+    async getReceivedPayments(siblingId, userId, includePending) {
+        return await executeQuery(
+            `SELECT req.id, req.created_at, 'PAYMENT_RECEIVED' AS movement_type, req.amount, req.payment_date,
+                    NULL AS detail, req.created_by_user_id, resolved.paired_movement_id,
+                    NULL AS reversal_requested_by_user_id, NULL AS reversal_requested_at
+             FROM purchases_movements req
+             LEFT JOIN purchases_movements resolved
+               ON req.movement_type = 'PAYMENT_REQUESTED' AND resolved.id = req.paired_movement_id
+             WHERE req.purchase_id = $1
+               AND req.created_by_user_id <> $2
+               AND ((req.movement_type = 'PENDING_PAYMENT' AND $3::boolean)
+                 OR (req.movement_type = 'PAYMENT_REQUESTED'
+                     AND resolved.movement_type IN ('PAYMENT', 'PAYMENT_REVERTED')))`,
+            [siblingId, userId, includePending]
+        );
+    }
+
+    async getSharedSentEvent(purchaseId) {
+        return await executeQuery(
+            `SELECT -m.id AS id, m.created_at, 'SHARED_SENT' AS movement_type, NULL AS amount,
+                    NULL AS payment_date, NULL AS detail, fe.user_id AS created_by_user_id,
+                    NULL AS paired_movement_id, NULL AS reversal_requested_by_user_id,
+                    NULL AS reversal_requested_at
+             FROM purchases copia
+             JOIN purchases_movements m ON m.purchase_id = copia.id AND m.movement_type = 'CREATION'
+             JOIN purchases original ON original.id = copia.shared_from_id
+             LEFT JOIN financial_entities fe ON fe.id = original.financial_entity_id
+             WHERE copia.id = $1 OR copia.shared_from_id = $1
+             ORDER BY m.created_at ASC, m.id ASC
+             LIMIT 1`,
+            [purchaseId]
+        );
+    }
+
     async createEntidadLog(entidadId, movementType, detail = null) {
         return await executeQuery(
             `INSERT INTO financial_entities_movements (created_at, financial_entity_id, movement_type, detail)
