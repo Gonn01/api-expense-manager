@@ -1,4 +1,4 @@
-import { Currency } from "../utils/enums.js";
+import { Currency, normalizeCurrency } from "../utils/enums.js";
 import { handleError, badRequest } from "../utils/errors.js";
 import { PUSH_LANGUAGES } from "../utils/push-messages.js";
 
@@ -10,15 +10,15 @@ export class UserController {
     updatePreferredCurrency = async (req, res) => {
         try {
             const userId = req.session.userId;
-            const { preferred_currency } = req.body;
+            const preferredCurrency = normalizeCurrency(req.body.preferred_currency);
 
-            if (!preferred_currency || !Object.values(Currency).includes(preferred_currency)) {
+            if (!preferredCurrency) {
                 return badRequest(res, `Debe enviar 'preferred_currency' válida (${Object.values(Currency).join(', ')})`);
             }
 
             const updated = await this.userService.updatePreferredCurrency(
                 userId,
-                preferred_currency
+                preferredCurrency
             );
 
             res.json({
@@ -45,14 +45,16 @@ export class UserController {
                 return badRequest(res, "Debe enviar 'sueldo' como un número mayor o igual a 0");
             }
 
-            if (sueldo_currency !== undefined && !Object.values(Currency).includes(sueldo_currency)) {
+            const sueldoCurrency = sueldo_currency === undefined ? undefined : normalizeCurrency(sueldo_currency);
+
+            if (sueldo_currency !== undefined && !sueldoCurrency) {
                 return badRequest(res, `Debe enviar 'sueldo_currency' válida (${Object.values(Currency).join(', ')})`);
             }
 
             const updated = await this.userService.updateSueldo(
                 userId,
                 sueldoNumber,
-                sueldo_currency
+                sueldoCurrency
             );
 
             res.json({

@@ -12,7 +12,7 @@ No ORM: database access goes through a hand-rolled `executeQuery` wrapper (`db.j
 
 ## Feature parity rule
 
-Any change to the API's behavior (new endpoint, changed response shape, new field, new validation, new error code) affects **both** frontend clients and must be reflected in both: the React web app (`c:\Users\gonza\Desktop\web-plataformas-de-desarrollo`) and the Flutter app (`d:\proyectos_flutter\app_expense_manager`). Those two are meant to mirror each other's features on top of this same API.
+Any change to the API's behavior (new endpoint, changed response shape, new field, new validation, new error code) affects **both** frontend clients and must be reflected in both: the React web app (`web-plataformas-de-desarrollo`) and the Flutter app (`app_expense_manager`). Those two are meant to mirror each other's features on top of this same API.
 
 **Exception**: this rule is about functional behavior, not UI — the clients' screens differ in size and interaction pattern, so their layouts can legitimately diverge even when the underlying API contract they consume is identical.
 
@@ -21,18 +21,20 @@ When making a contract-changing change here, call out explicitly whether the web
 ## Documentation update rule
 
 - `.claude/guides/arquitectura-api.md` (this repo) — this API's architecture guide. Read it before changing code here.
-- `c:\Users\gonza\Desktop\web-plataformas-de-desarrollo\docs\` — the functional documentation for the whole system (this API + both clients) lives in the **web repo**, not here: functional requirements, non-functional requirements, use cases and their diagrams.
-- The clients' architecture guides are in their own repos: `c:\Users\gonza\Desktop\web-plataformas-de-desarrollo\.claude\guides\arquitectura-web.md` and `d:\proyectos_flutter\app_expense_manager\.claude\guides\arquitectura-flutter.md`.
+- `docs/` in the web repo — the functional documentation for the whole system (this API + both clients) lives in the **web repo**, not here: functional requirements, non-functional requirements, use cases and their diagrams.
+- The clients' architecture guides are in their own repos: `.claude/guides/arquitectura-web.md` in the web repo and `.claude/guides/arquitectura-flutter.md` in the Flutter repo.
 
-**Every change made in this repo must update, in the same change, whatever it leaves stale** in this repo's architecture guide, in the web repo's `docs\` and in this `CLAUDE.md`. `c:\Users\gonza\Desktop\web-plataformas-de-desarrollo\.claude\guides\documentacion.md` has the table of what to update for each kind of change — follow it. Document what the code actually does: a rule this API does not enforce is recorded as a known limitation, not as fulfilled.
+**Every change made in this repo must update, in the same change, whatever it leaves stale** in this repo's architecture guide, in the web repo's `docs/` and in this `CLAUDE.md`. `.claude/guides/documentacion.md` in the web repo has the table of what to update for each kind of change — follow it. Document what the code actually does: a rule this API does not enforce is recorded as a known limitation, not as fulfilled.
 
-**Every time an endpoint is added, removed or changed** (method, path, query params, body, auth or response data its scripts read), update the Postman collection in the same change: `d:\proyectos_react\web-plataformas-de-desarrollo\postman\plataforma-gestion-deudas.postman_collection.json`. It must keep covering every route of this API.
+**Every time an endpoint is added, removed or changed** (method, path, query params, body, auth or response data its scripts read), update the Postman collection in the same change: `postman/plataforma-gestion-deudas.postman_collection.json` in the web repo. It must keep covering every route of this API.
+
+**No absolute paths in documentation**: each team member clones the repos in a different location, so never write machine-specific paths. Use paths relative to the repo root, and refer to another project by its repo name (e.g. `docs/` in the web repo).
 
 At the end of every task, state which documentation files were updated, or say explicitly that none needed updating and why.
 
 ## No code comments rule
 
-**Do not write comments in code** — in any of the three projects (this API, the web app, the Flutter app). No `//`, `/* */` or JSDoc `/** */`, not even section markers. Code must explain itself through names and structure; the "why" of a business rule belongs in the web repo's `docs\` or the architecture guide, not in the source. When editing a file that still has a comment, remove it.
+**Do not write comments in code** — in any of the three projects (this API, the web app, the Flutter app). No `//`, `/* */` or JSDoc `/** */`, not even section markers. Code must explain itself through names and structure; the "why" of a business rule belongs in the web repo's `docs/` or the architecture guide, not in the source. When editing a file that still has a comment, remove it.
 
 Only tool directives are allowed (`eslint-disable*`).
 

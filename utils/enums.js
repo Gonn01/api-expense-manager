@@ -66,6 +66,11 @@ export const Currency = Object.freeze({
     ZAR: 'ZAR',
 });
 
+export const normalizeCurrency = (value) => {
+    const code = String(value).toUpperCase();
+    return Object.values(Currency).includes(code) ? code : null;
+};
+
 export const ExpenseType = Object.freeze({
     EGRESO: 'EGRESO',
     INGRESO: 'INGRESO',

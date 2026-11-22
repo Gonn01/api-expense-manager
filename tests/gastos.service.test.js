@@ -794,8 +794,16 @@ describe("GastosService", () => {
             categoriasRepository.addCategoriasToNewGasto = vi.fn(async (_, ids) => ids.map((id) => ({ id, name: `c${id}` })));
         });
 
-        const crearCon = ({ amount = 300, number_of_quotas = 3, fixed_expense = false } = {}) =>
-            service.crearGasto(7, "Netflix", amount, number_of_quotas, "ARS", fixed_expense, null, "EGRESO", OWNER);
+        const crearCon = ({ amount = 300, number_of_quotas = 3, fixed_expense = false, currency_type = "ARS" } = {}) =>
+            service.crearGasto(7, "Netflix", amount, number_of_quotas, currency_type, fixed_expense, null, "EGRESO", OWNER);
+
+        it("guarda la moneda en mayúsculas", async () => {
+            await crearCon({ currency_type: "usd" });
+
+            expect(gastosRepository.create).toHaveBeenCalledWith(
+                expect.objectContaining({ currency_type: "USD" }),
+            );
+        });
 
         it.each([
             [{ amount: 0 }, "amount"],
@@ -804,6 +812,8 @@ describe("GastosService", () => {
             [{ amount: "  " }, "amount"],
             [{ amount: true }, "amount"],
             [{ amount: Number.POSITIVE_INFINITY }, "amount"],
+            [{ currency_type: "XXX" }, "currency_type"],
+            [{ currency_type: "" }, "currency_type"],
             [{ number_of_quotas: 0 }, "number_of_quotas"],
             [{ number_of_quotas: -2 }, "number_of_quotas"],
             [{ number_of_quotas: 1.5 }, "number_of_quotas"],

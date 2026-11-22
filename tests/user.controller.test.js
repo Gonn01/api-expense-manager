@@ -39,6 +39,16 @@ describe("UserController", () => {
             });
         });
 
+        it("guarda preferred_currency en mayúsculas", async () => {
+            const req = makeReq({ body: { preferred_currency: "usd" } });
+            const res = makeRes();
+            userService.updatePreferredCurrency.mockResolvedValue({ id: 1, preferred_currency: "USD" });
+
+            await controller.updatePreferredCurrency(req, res);
+
+            expect(userService.updatePreferredCurrency).toHaveBeenCalledWith(1, "USD");
+        });
+
         it("responde 400 cuando falta preferred_currency", async () => {
             const req = makeReq({ body: {} });
             const res = makeRes();
@@ -98,6 +108,16 @@ describe("UserController", () => {
                 message: "Sueldo actualizado",
                 data: { id: 1, sueldo: 1500.5 },
             });
+        });
+
+        it("guarda sueldo_currency en mayúsculas", async () => {
+            const req = makeReq({ body: { sueldo: 100, sueldo_currency: "eur" } });
+            const res = makeRes();
+            userService.updateSueldo.mockResolvedValue({ id: 1, sueldo: 100, sueldo_currency: "EUR" });
+
+            await controller.updateSueldo(req, res);
+
+            expect(userService.updateSueldo).toHaveBeenCalledWith(1, 100, "EUR");
         });
 
         it("responde 400 cuando sueldo_currency no es válida", async () => {

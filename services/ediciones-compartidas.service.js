@@ -1,8 +1,8 @@
 import {
-    Currency,
     ExpenseStatus,
     ExpenseType,
     MovementType,
+    normalizeCurrency,
     oppositeExpenseType,
     PusherEvent,
 } from "../utils/enums.js";
@@ -48,8 +48,8 @@ export function normalizarCambios(input, gasto) {
 
     let currency_type = gasto.currency_type;
     if (has("currency_type")) {
-        currency_type = String(input.currency_type).toUpperCase();
-        if (!Object.values(Currency).includes(currency_type)) throw invalid("currency_type", "La moneda es inválida.");
+        currency_type = normalizeCurrency(input.currency_type);
+        if (!currency_type) throw invalid("currency_type", "La moneda es inválida.");
     }
 
     let type = gasto.type;

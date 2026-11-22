@@ -2,7 +2,7 @@ import {
     MovementType,
     ExpenseStatus,
     ExpenseType,
-    Currency,
+    normalizeCurrency,
     PusherEvent,
     oppositeExpenseType,
 } from "../utils/enums.js";
@@ -30,6 +30,12 @@ const parseAmount = (value) => {
         throw invalidField("amount", "El monto debe ser un número mayor a 0.");
     }
     return amount;
+};
+
+const parseCurrency = (value) => {
+    const currency = normalizeCurrency(value);
+    if (!currency) throw invalidField("currency_type", "La moneda es inválida.");
+    return currency;
 };
 
 const parseQuotas = (value, fixedExpense) => {
@@ -337,12 +343,7 @@ export class GastosService {
         }
 
         let currency_type = current.currency_type;
-        if (has("currency_type")) {
-            currency_type = String(input.currency_type).toUpperCase();
-            if (!Object.values(Currency).includes(currency_type)) {
-                throw invalidField("currency_type", "La moneda es inválida.");
-            }
-        }
+        if (has("currency_type")) currency_type = parseCurrency(input.currency_type);
 
         const fixed_expense = has("fixed_expense")
             ? Boolean(input.fixed_expense)
@@ -826,6 +827,7 @@ export class GastosService {
     ) {
         fixed_expense = fixed_expense === true || fixed_expense === "true";
         amount = parseAmount(amount);
+        currency_type = parseCurrency(currency_type);
         number_of_quotas = fixed_expense && number_of_quotas == null
             ? 1
             : parseQuotas(number_of_quotas, fixed_expense);
