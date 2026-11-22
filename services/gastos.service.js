@@ -7,7 +7,7 @@ import { withTransaction, bestEffort } from "../db.js";
 
 export const MAX_INSTALLMENTS = 360;
 const MAX_INSTALLMENTS_MESSAGE = `El máximo es de ${MAX_INSTALLMENTS} cuotas.`;
-const ESTADOS_SIN_ACEPTAR = new Set([ExpenseStatus.PENDING_APPROVAL, ExpenseStatus.REJECTED]);
+const ESTADOS_SIN_ACEPTAR = new Set([ExpenseStatus.REJECTED]);
 
 export class GastosService {
     constructor({
@@ -704,6 +704,7 @@ export class GastosService {
         category_ids = [],
         linked_purchase_id = null,
         is_postponed = false,
+        paidAsPendingBy = null,
     }) {
         const rows = await this.gastosRepository.create({
             financial_entity_id,
@@ -723,13 +724,15 @@ export class GastosService {
         const amountPerQuota = number_of_quotas > 0 ? amount / number_of_quotas : amount;
         const paymentDate = new Date();
 
+        const paidAsPending = paidAsPendingBy != null;
         const logs = [
             { gastoId, movementType: MovementType.CREATION },
             ...Array.from({ length: Number(payed_quotas) || 0 }, () => ({
                 gastoId,
-                movementType: MovementType.PAYMENT,
+                movementType: paidAsPending ? MovementType.PENDING_PAYMENT : MovementType.PAYMENT,
                 amount: amountPerQuota,
                 paymentDate,
+                createdByUserId: paidAsPendingBy,
             })),
         ];
 
@@ -738,12 +741,13 @@ export class GastosService {
             this.categoriasRepository.addCategoriasToNewGasto(gastoId, category_ids),
         ]);
 
-        const paid = Number(payed_quotas) || 0;
+        const registered = Number(payed_quotas) || 0;
+        const paid = paidAsPending ? 0 : registered;
         const lastPayment = paid > 0 ? paymentDate : null;
         Object.assign(rows[0], {
             categories,
             payed_quotas: paid,
-            pending_quotas: 0,
+            pending_quotas: paidAsPending ? registered : 0,
             first_quota_date: lastPayment,
             last_payment_date: lastPayment,
             finalization_date: !fixed_expense && paid >= Number(number_of_quotas) ? lastPayment : null,
@@ -804,6 +808,7 @@ export class GastosService {
                 payed_quotas,
                 category_ids,
                 is_postponed: Boolean(postponed),
+                paidAsPendingBy: entidad[0].linked_user_id ? userId : null,
             });
 
             const gastoId = rows[0].id;
@@ -936,7 +941,7 @@ export class GastosService {
         if (!/^\d+$/.test(String(purchase_id))) throw customError(ErrorCode.GASTO_NOT_FOUND);
 
         return this.tx(async () => {
-            const siblings = await this.gastosRepository.getSharedSibling(purchase_id);
+            const siblings = await this.gastosRepository.getSharedSibling(purchase_id, { includePendingApproval: true });
             await this.gastosRepository.lockPurchases([purchase_id, siblings[0]?.sibling_id]);
 
             const [rows, session] = await Promise.all([
@@ -970,7 +975,7 @@ export class GastosService {
             const ids = [...new Set(purchaseIds.map(String))].filter((id) => /^\d+$/.test(id));
             if (!ids.length) return { kept: [], discarded: purchaseIds.map(Number), payments: {} };
 
-            const siblings = await this.gastosRepository.getSharedSiblings(ids);
+            const siblings = await this.gastosRepository.getSharedSiblings(ids, { includePendingApproval: true });
             const siblingById = new Map(
                 siblings
                     .filter((s) => s.counterparty_user_id && String(s.counterparty_user_id) !== String(userId))
@@ -1041,7 +1046,9 @@ export class GastosService {
                     paymentDate,
                     createdByUserId: userId,
                 });
-                notifications.push([sibling.counterparty_user_id, gasto.id, sibling.sibling_id]);
+                if (!this.#esperaAprobacion(sibling)) {
+                    notifications.push([sibling.counterparty_user_id, gasto.id, sibling.sibling_id]);
+                }
             }
 
             const [insertedRows, actorName] = await Promise.all([
@@ -1086,8 +1093,14 @@ export class GastosService {
         });
     }
 
+    #esperaAprobacion(sibling) {
+        return sibling?.sibling_status === ExpenseStatus.PENDING_APPROVAL;
+    }
+
     async #registrarPagoOPendiente(gasto, userId, paymentDate, knownSiblings) {
-        const [sibling] = knownSiblings ?? (await this.gastosRepository.getSharedSibling(gasto.id));
+        const [sibling] =
+            knownSiblings ??
+            (await this.gastosRepository.getSharedSibling(gasto.id, { includePendingApproval: true }));
 
         const esCompartido =
             sibling &&
@@ -1112,11 +1125,13 @@ export class GastosService {
                 ),
                 this.#nombreDe(userId),
             ]);
-            await triggerCompartidos(sibling.counterparty_user_id, PusherEvent.PAGO_PENDIENTE, {
-                purchaseId: gasto.id,
-                copyId: sibling.sibling_id,
-                actorName,
-            });
+            if (!this.#esperaAprobacion(sibling)) {
+                await triggerCompartidos(sibling.counterparty_user_id, PusherEvent.PAGO_PENDIENTE, {
+                    purchaseId: gasto.id,
+                    copyId: sibling.sibling_id,
+                    actorName,
+                });
+            }
             return { pending: true };
         }
 

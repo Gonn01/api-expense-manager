@@ -24,7 +24,7 @@ const CATALOG = Object.freeze({
     GASTO_COMPARTIDO_DESVINCULADO: { status: HttpStatus.CONFLICT, message: "La entidad ya no está vinculada a esa persona: no se puede reintentar, solo descartar." },
     GASTO_COMPARTIDO_NO_RESTAURABLE: { status: HttpStatus.CONFLICT, message: "Un gasto compartido eliminado no se puede restaurar." },
     GASTO_NO_COMPARTIBLE: { status: HttpStatus.CONFLICT, message: "Este gasto no se puede compartir: tiene que estar activo, en una entidad vinculada y no haber sido compartido antes." },
-    GASTO_NO_ACTIVO: { status: HttpStatus.CONFLICT, message: "El gasto no está activo: la otra persona todavía no lo aceptó." },
+    GASTO_NO_ACTIVO: { status: HttpStatus.CONFLICT, message: "El gasto no está activo: la otra persona lo rechazó." },
     GASTO_YA_SALDADO: { status: HttpStatus.CONFLICT, message: "El gasto ya tiene todas sus cuotas pagas" },
     SIN_CUOTAS_PARA_REVERTIR: { status: HttpStatus.BAD_REQUEST, message: "No hay cuotas pagadas para revertir" },
     LISTA_IDS_INVALIDA: { status: HttpStatus.BAD_REQUEST, message: "La lista de IDs de compra es inválida." },
