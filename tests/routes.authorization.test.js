@@ -46,6 +46,7 @@ const PROTECTED_ROUTES = [
     ["put", "/entidades-financieras/1"],
     ["put", "/entidades-financieras/1/restaurar"],
     ["put", "/entidades-financieras/1/favorito"],
+    ["put", "/entidades-financieras/1/alias-mercado-pago"],
     ["put", "/entidades-financieras/1/vincular-usuario"],
     ["delete", "/entidades-financieras/1/vincular-usuario"],
     ["get", "/dashboard"],

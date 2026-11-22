@@ -31,6 +31,7 @@ export class EntidadesFinancierasRepository {
     async getById(id, userId) {
         return await executeQuery(
             `SELECT fe.id, fe.name, fe.user_id, fe.deleted, fe.created_at, fe.linked_user_id, fe.is_favorite,
+                    fe.mercado_pago_alias,
                     u.name AS linked_user_name, u.email AS linked_user_email
              FROM financial_entities fe
              LEFT JOIN users u ON u.id = fe.linked_user_id
@@ -47,6 +48,16 @@ export class EntidadesFinancierasRepository {
              WHERE id = $1 AND user_id = $2 AND deleted = false
              RETURNING id, name, user_id, deleted, created_at, linked_user_id, is_favorite`,
             [id, userId, value]
+        );
+    }
+
+    async setMercadoPagoAlias(id, userId, alias) {
+        return await executeQuery(
+            `UPDATE financial_entities
+             SET mercado_pago_alias = $3
+             WHERE id = $1 AND user_id = $2 AND deleted = false
+             RETURNING id, name, user_id, deleted, created_at, linked_user_id, is_favorite, mercado_pago_alias`,
+            [id, userId, alias]
         );
     }
 

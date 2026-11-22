@@ -1,5 +1,6 @@
 import { handleError, badRequest } from "../utils/errors.js";
 import { HttpStatus } from "../utils/http_status.js";
+import { normalizeMercadoPagoAlias } from "../utils/mercado-pago-alias.js";
 
 export class EntidadesFinancierasController {
     constructor(entidadesFinancierasService) {
@@ -85,6 +86,28 @@ export class EntidadesFinancierasController {
             res.json({
                 message: "Entidad financiera actualizada con éxito",
                 data: response
+            });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    }
+
+    actualizarAliasMercadoPago = async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { userId } = req.session;
+            const alias = normalizeMercadoPagoAlias(req.body?.alias);
+
+            if (alias === undefined) {
+                return badRequest(res, "El alias debe tener entre 6 y 20 letras, números, puntos o guiones");
+            }
+
+            const entidad = await this.entidadesFinancierasService.actualizarAliasMercadoPago(id, alias, userId);
+            const movements = await this.entidadesFinancierasService.obtenerMovements(id);
+
+            res.json({
+                message: "Alias de Mercado Pago actualizado con éxito",
+                data: { ...entidad, movements }
             });
         } catch (err) {
             return handleError(res, err);

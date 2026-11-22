@@ -53,6 +53,21 @@ describe("notificaciones", () => {
         expect(data.unread_count).toBe(2);
     });
 
+    it("guarda en cada notificación el gasto propio de quien la recibe", async () => {
+        const { ownerExpense, copyId } = await createSharedExpense(ana, beto);
+
+        const recibida = (await feed(beto)).items.find((item) => item.event === "compartido.nuevo");
+        expect(String(recibida.data.ownGastoId)).toBe(String(copyId));
+
+        const pedido = await ana.post(`/notificaciones/pendientes/gastos/${ownerExpense}/edicion`, {
+            name: "Nuevo nombre",
+        });
+        await beto.post(`/notificaciones/pendientes/ediciones/${pedido.data.id}/aprobar`);
+
+        const aprobada = (await feed(ana)).items.find((item) => item.event === "edicion.aprobada");
+        expect(String(aprobada.data.ownGastoId)).toBe(String(ownerExpense));
+    });
+
     it("avisa la baja de una entidad vinculada e indica la entidad propia de quien recibe", async () => {
         const { ownerEntity } = await createSharedExpense(ana, beto);
         const inicial = await feed(beto);

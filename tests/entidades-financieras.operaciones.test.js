@@ -26,6 +26,7 @@ describe("EntidadesFinancierasService: operaciones", () => {
             create: vi.fn(async () => [entidad()]),
             update: vi.fn(async (id, name) => [entidad({ name })]),
             setFavorite: vi.fn(async (id, userId, value) => [entidad({ is_favorite: value })]),
+            setMercadoPagoAlias: vi.fn(async (id, userId, alias) => [entidad({ mercado_pago_alias: alias })]),
             vincularUsuario: vi.fn(async () => [entidad({ linked_user_id: 2 })]),
             desvincularUsuario: vi.fn(async () => [entidad({ linked_user_id: null })]),
         };
@@ -127,6 +128,51 @@ describe("EntidadesFinancierasService: operaciones", () => {
             movementsRepository.createEntidadLog.mockRejectedValue(new Error("db"));
 
             await expect(service.actualizar(ENTIDAD, "Nuevo", USER)).resolves.toMatchObject({ name: "Nuevo" });
+        });
+    });
+
+    describe("actualizarAliasMercadoPago", () => {
+        it("guarda el alias y registra el cambio", async () => {
+            const result = await service.actualizarAliasMercadoPago(ENTIDAD, "banco.demo", USER);
+
+            expect(result.mercado_pago_alias).toBe("banco.demo");
+            expect(entidadesFinancierasRepository.setMercadoPagoAlias).toHaveBeenCalledWith(ENTIDAD, USER, "banco.demo");
+            expect(movementsRepository.createEntidadLog).toHaveBeenCalledWith(
+                ENTIDAD,
+                "EDITED",
+                'Alias de Mercado Pago: sin alias → "banco.demo"',
+            );
+        });
+
+        it("permite quitar el alias", async () => {
+            entidadesFinancierasRepository.getById.mockResolvedValue([entidad({ mercado_pago_alias: "banco.demo" })]);
+
+            await service.actualizarAliasMercadoPago(ENTIDAD, null, USER);
+
+            expect(entidadesFinancierasRepository.setMercadoPagoAlias).toHaveBeenCalledWith(ENTIDAD, USER, null);
+            expect(movementsRepository.createEntidadLog).toHaveBeenCalledWith(
+                ENTIDAD,
+                "EDITED",
+                'Alias de Mercado Pago: "banco.demo" → sin alias',
+            );
+        });
+
+        it("no escribe si el alias no cambió", async () => {
+            entidadesFinancierasRepository.getById.mockResolvedValue([entidad({ mercado_pago_alias: "banco.demo" })]);
+
+            await service.actualizarAliasMercadoPago(ENTIDAD, "banco.demo", USER);
+
+            expect(entidadesFinancierasRepository.setMercadoPagoAlias).not.toHaveBeenCalled();
+            expect(movementsRepository.createEntidadLog).not.toHaveBeenCalled();
+        });
+
+        it("no modifica una entidad ajena", async () => {
+            entidadesFinancierasRepository.getById.mockResolvedValue([]);
+
+            await expect(service.actualizarAliasMercadoPago(ENTIDAD, "banco.demo", USER)).rejects.toMatchObject({
+                code: "ENTIDAD_NOT_FOUND",
+            });
+            expect(entidadesFinancierasRepository.setMercadoPagoAlias).not.toHaveBeenCalled();
         });
     });
 

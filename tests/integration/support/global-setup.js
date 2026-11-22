@@ -11,6 +11,7 @@ const PENDING_MIGRATIONS = [
     fileURLToPath(new URL("../../../migrations/manual/2026-11-21_users_push_language.sql", import.meta.url)),
     fileURLToPath(new URL("../../../migrations/manual/2026-11-22_notificaciones.sql", import.meta.url)),
     fileURLToPath(new URL("../../../migrations/manual/2026-11-22_users_identidad_unica.sql", import.meta.url)),
+    fileURLToPath(new URL("../../../migrations/manual/2026-11-22_entidades_alias_mercado_pago.sql", import.meta.url)),
 ];
 const DB_USER = "integration";
 const DB_NAME = "integration";

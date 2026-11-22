@@ -90,6 +90,7 @@ export class EntidadesFinancierasService {
       name: entity.name,
       created_at: entity.created_at,
       is_favorite: entity.is_favorite,
+      mercado_pago_alias: entity.mercado_pago_alias ?? null,
       linked_user_id: entity.linked_user_id,
       linked_user_name: entity.linked_user_name ?? null,
       linked_user_email: entity.linked_user_email ?? null,
@@ -128,6 +129,23 @@ export class EntidadesFinancierasService {
     if (name !== oldName) {
       await this.#log(id, MovementType.EDITED, `Nombre: "${oldName}" → "${name}"`);
     }
+
+    return row;
+  }
+
+  async actualizarAliasMercadoPago(id, alias, userId) {
+    const [actual] = await this.entidadesFinancierasRepository.getById(id, userId);
+    if (!actual) throw customError(ErrorCode.ENTIDAD_NOT_FOUND);
+
+    const anterior = actual.mercado_pago_alias ?? null;
+    if (anterior === alias) return actual;
+
+    const [row] = await this.entidadesFinancierasRepository.setMercadoPagoAlias(id, userId, alias);
+    await this.#log(
+      id,
+      MovementType.EDITED,
+      `Alias de Mercado Pago: ${anterior ? `"${anterior}"` : "sin alias"} → ${alias ? `"${alias}"` : "sin alias"}`,
+    );
 
     return row;
   }

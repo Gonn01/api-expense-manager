@@ -10,15 +10,24 @@ export class NotificacionesRepository {
         );
     }
 
-    async getGastoContext(gastoId) {
+    async getGastoContext(gastoId, userId) {
         return await executeQuery(
-            `SELECT p.name, owner.name AS owner_name
+            `SELECT p.name, owner.name AS owner_name,
+                    (SELECT own.id
+                     FROM purchases own
+                     LEFT JOIN financial_entities own_fe ON own_fe.id = own.financial_entity_id
+                     WHERE own.deleted = false
+                       AND (own.id = COALESCE(p.shared_from_id, p.id)
+                            OR own.shared_from_id = COALESCE(p.shared_from_id, p.id))
+                       AND (own_fe.user_id = $2::bigint
+                            OR (own.shared_from_id IS NOT NULL AND own.receiver_user_id = $2::bigint))
+                     LIMIT 1) AS own_gasto_id
              FROM purchases p
              LEFT JOIN financial_entities fe ON fe.id = p.financial_entity_id
              LEFT JOIN users owner ON owner.id = fe.user_id
              WHERE p.id = $1
              LIMIT 1`,
-            [gastoId],
+            [gastoId, userId],
         );
     }
 

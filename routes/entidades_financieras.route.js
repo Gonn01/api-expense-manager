@@ -12,6 +12,7 @@ router.delete("/:id", controller.eliminar);
 router.put("/:id", controller.actualizar);
 router.put("/:id/restaurar", controller.restaurar);
 router.put("/:id/favorito", controller.favorito);
+router.put("/:id/alias-mercado-pago", controller.actualizarAliasMercadoPago);
 router.put("/:id/vincular-usuario", controller.vincularUsuario);
 router.delete("/:id/vincular-usuario", controller.desvincularUsuario);
 

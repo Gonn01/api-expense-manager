@@ -45,7 +45,7 @@ describe("buildPushMessage", () => {
 
     it("usa el texto anónimo de un pago pendiente sin actor", () => {
         expect(buildPushMessage(PusherEvent.PAGO_PENDIENTE, {}, "es").body).toBe(
-            "Tenés un pago para confirmar en Notificaciones",
+            "Tenés un pago para confirmar en Compartidos",
         );
     });
 
