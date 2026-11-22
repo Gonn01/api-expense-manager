@@ -26,7 +26,7 @@ When making a contract-changing change here, call out explicitly whether the web
 
 **Every change made in this repo must update, in the same change, whatever it leaves stale** in this repo's architecture guide, in the web repo's `docs/` and in this `CLAUDE.md`. `.claude/guides/documentacion.md` in the web repo has the table of what to update for each kind of change — follow it. Document what the code actually does: a rule this API does not enforce is recorded as a known limitation, not as fulfilled.
 
-**Every time an endpoint is added, removed or changed** (method, path, query params, body, auth or response data its scripts read), update the Postman collection in the same change: `postman/plataforma-gestion-deudas.postman_collection.json` in the web repo. It must keep covering every route of this API.
+**Every time an endpoint is added, removed or changed** (method, path, query params, body, auth or response data its scripts read), update the Postman collection in the same change: `postman/expense-manager.postman_collection.json` in the web repo. It must keep covering every route of this API.
 
 **No absolute paths in documentation**: each team member clones the repos in a different location, so never write machine-specific paths. Use paths relative to the repo root, and refer to another project by its repo name (e.g. `docs/` in the web repo).
 

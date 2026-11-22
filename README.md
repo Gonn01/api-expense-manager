@@ -1,6 +1,6 @@
-# Plataforma de Gestión de Deudas — API
+# Expense Manager — API
 
-API REST de la **Plataforma de Gestión de Deudas**, hecha en Node.js con Express 5 sobre PostgreSQL.
+API REST de **Expense Manager**, hecha en Node.js con Express 5 sobre PostgreSQL.
 
 ## Descripción del proyecto
 
