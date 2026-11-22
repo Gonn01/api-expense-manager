@@ -20,7 +20,7 @@ repositories/<recurso>.repository.js    SQL crudo con executeQuery (db.js)
 - **Controller**: sin lógica de negocio. Toma `userId` de `req.session`, valida la forma del input (`badRequest`) y delega. Todo `catch` termina en `handleError(res, err)`.
 - **Service**: único lugar con reglas de negocio. No conoce `req` ni `res`.
 - **Repository**: único lugar con SQL. Siempre con parámetros posicionales (`$1, $2…`); nunca concatenar valores.
-- **Usuarios**: toda consulta que devuelve filas de `users` (SELECT o `RETURNING`) usa `USER_PUBLIC_COLUMNS` de `repositories/user-columns.js`, nunca `SELECT *`, así todas las respuestas traen los mismos campos (incluido `avatar`). El hash de la contraseña no sale de la API: solo lo lee `AuthRepository.findUserWithPasswordByEmail`, y `AuthService.login` lo quita antes de responder.
+- **Usuarios**: toda consulta que devuelve filas de `users` (SELECT o `RETURNING`) usa `USER_PUBLIC_COLUMNS` de `repositories/user-columns.js`, nunca `SELECT *`, así todas las respuestas traen los mismos campos (incluido `avatar`). El hash de la contraseña no sale de la API: solo lo leen `AuthRepository.findUserWithPasswordByEmail` y `UserRepository.getPasswordHash`, y sus services nunca lo devuelven.
 - Al agregar un recurso, replicar esta estructura en lugar de apartarse de ella.
 
 ## 2. Rutas y autenticación
@@ -32,6 +32,8 @@ Grupos: `/health`, `/auth`, `/user`, `/entidades-financieras`, `/dashboard`, `/g
 `GET /api/health` hace un `SELECT 1` contra la base y responde 200 con `{ status, database, uptime, timestamp }`, o 503 si la base no responde. Sirve para comprobar que la API está levantada.
 
 `verifyToken` valida `Authorization: Bearer <jwt>` con `JWT_SECRET` y deja el payload en `req.session` (al menos `userId`). Responde **401** si falta el token, es inválido o venció: es la señal con la que los clientes cierran la sesión. El **403** queda para un usuario autenticado sin permiso sobre el recurso (`NO_AUTORIZADO`); no devolver 401 por eso, porque deslogearía al usuario.
+
+**Identidad de la cuenta**: hay una sola cuenta por email normalizado (`utils/normalize-email.js`; índice único sobre `lower(email)`, creado por `migrations/manual/2026-11-22_users_identidad_unica.sql`). `POST /auth/firebase-login` recibe `{ idToken, password?, discardPassword? }`; `utils/firebase-token.js` verifica el token con `firebase-admin` contra `FIREBASE_PROJECT_ID`, y de ahí salen uid, email, nombre y foto. `AuthService.#resolveGoogleAccount` busca por uid, después por email, y si no encuentra crea la cuenta. Vincular una cuenta con contraseña exige `password` o `discardPassword: true` (`VINCULACION_REQUIERE_CONTRASENA`, `CONTRASENA_INCORRECTA`). El registro nunca modifica una cuenta existente. `GET /user/password-status` responde `{ has_password }` y `PUT /user/password` recibe `{ current_password?, new_password }`.
 
 **Autorización**: el usuario se toma siempre de `req.session.userId`, nunca del body. Todo service que lea o modifique un recurso debe verificar que pertenezca a ese usuario. Para gastos, `GastosService` lo resuelve con `#getOwned(id, userId)` (trae el gasto y verifica que su entidad sea del usuario; `GASTO_NOT_FOUND` / `NO_AUTORIZADO`): toda operación sobre un gasto empieza por ahí, y todo método público del service recibe `userId`. Para validar varios ids en una sola consulta desde otro service (por ejemplo, al marcar gastos en una sesión de cuentas) está `assertOwnedAll(ids, userId)`. Un endpoint nuevo **debe** hacer lo mismo.
 

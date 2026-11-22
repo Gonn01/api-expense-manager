@@ -23,6 +23,20 @@ export class UserRepository {
         );
     }
 
+    async getPasswordHash(userId) {
+        return await executeQuery(
+            `SELECT password FROM users WHERE id = $1`,
+            [userId]
+        );
+    }
+
+    async updatePassword(userId, hash) {
+        return await executeQuery(
+            `UPDATE users SET password = $2 WHERE id = $1 RETURNING id`,
+            [userId, hash]
+        );
+    }
+
     async getPushLanguage(userId) {
         return await executeQuery(
             `SELECT push_language FROM users WHERE id = $1`,

@@ -4,14 +4,14 @@ import { USER_PUBLIC_COLUMNS } from './user-columns.js';
 export class AuthRepository {
     async findUserByEmail(email) {
         return await executeQuery(
-            `SELECT ${USER_PUBLIC_COLUMNS} FROM users WHERE email = $1 LIMIT 1`,
+            `SELECT ${USER_PUBLIC_COLUMNS} FROM users WHERE lower(email) = lower(trim($1)) LIMIT 1`,
             [email]
         );
     }
 
     async findUserWithPasswordByEmail(email) {
         return await executeQuery(
-            `SELECT ${USER_PUBLIC_COLUMNS}, password FROM users WHERE email = $1 LIMIT 1`,
+            `SELECT ${USER_PUBLIC_COLUMNS}, password FROM users WHERE lower(email) = lower(trim($1)) LIMIT 1`,
             [email]
         );
     }
@@ -32,14 +32,16 @@ export class AuthRepository {
         );
     }
 
-    async linkFirebaseId(userId, firebaseId, avatar) {
+    async linkFirebaseId(userId, { firebaseId, name, avatar, discardPassword = false }) {
         return await executeQuery(
             `UPDATE users
              SET firebase_user_id = $1,
-                 avatar = COALESCE(avatar, $2)
-             WHERE id = $3
+                 name = COALESCE(NULLIF(name, ''), $2),
+                 avatar = COALESCE(avatar, $3),
+                 password = CASE WHEN $4::boolean THEN NULL ELSE password END
+             WHERE id = $5
              RETURNING ${USER_PUBLIC_COLUMNS}`,
-            [firebaseId, avatar ?? null, userId]
+            [firebaseId, name ?? null, avatar ?? null, discardPassword, userId]
         );
     }
 }

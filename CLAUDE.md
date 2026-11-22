@@ -74,11 +74,13 @@ There is no DI container/framework — factories instantiate everything by hand.
 
 **Ownership**: every public `GastosService` method takes `userId` and starts with `#getOwned(id, userId)`, which checks the expense's entity belongs to that user. New operations on a user-owned resource must do the same.
 
-**User columns**: any query that returns `users` rows selects/returns `USER_PUBLIC_COLUMNS` (`repositories/user-columns.js`), never `SELECT *`. The password hash never leaves the API: only `AuthRepository.findUserWithPasswordByEmail` reads it, and `AuthService.login` strips it before responding.
+**User columns**: any query that returns `users` rows selects/returns `USER_PUBLIC_COLUMNS` (`repositories/user-columns.js`), never `SELECT *`. The password hash never leaves the API: only `AuthRepository.findUserWithPasswordByEmail` and `UserRepository.getPasswordHash` read it, and their services never return it.
+
+**Account identity**: one account per normalized email (`utils/normalize-email.js`, unique index on `lower(email)`). `POST /auth/firebase-login` takes only an `idToken` verified by `utils/firebase-token.js`; never trust an identity or email sent by a client. Linking Google to an account with a password requires that password or `discardPassword: true`. Registration never modifies an existing account.
 
 **Error handling**: `utils/errors.js` defines `CustomError`, an `ErrorCode` catalog (single source of truth: code → HTTP status + default Spanish message), and `customError(code, overrides)`. Services throw these instead of `throw new Error(...)`; a single `errorMiddleware` registered last in `index.js` translates them into JSON responses. Add new domain errors to the `CATALOG` rather than hand-rolling ad hoc errors.
 
-**Config**: `config/env.js` loads `.env` via `dotenv` and exports `JWT_SECRET`/`DATABASE_URL`/`BEAMS_INSTANCE_ID`/`BEAMS_SECRET_KEY` as named constants — other modules import these constants rather than reading `process.env` directly.
+**Config**: `config/env.js` loads `.env` via `dotenv` and exports `JWT_SECRET`/`DATABASE_URL`/`BEAMS_INSTANCE_ID`/`BEAMS_SECRET_KEY`/`FIREBASE_PROJECT_ID` as named constants — other modules import these constants rather than reading `process.env` directly.
 
 **Notifications**: `triggerCompartidos` (`utils/pusher.js`) also stores every `PusherEvent` for its recipient in `notifications` after COMMIT, except the actor's own action (`utils/notifications.js`).
 

@@ -44,6 +44,12 @@ const CATALOG = Object.freeze({
     USUARIO_EMAIL_NOT_FOUND: { status: HttpStatus.NOT_FOUND, message: "No existe un usuario registrado con ese email" },
     CREDENCIALES_INVALIDAS: { status: HttpStatus.UNAUTHORIZED, message: "Credenciales incorrectas" },
     EMAIL_YA_REGISTRADO: { status: HttpStatus.CONFLICT, message: "El email ya existe" },
+    EMAIL_REGISTRADO_CON_GOOGLE: { status: HttpStatus.CONFLICT, message: "Este email ya tiene una cuenta con Google. Entrá con Google y definí tu contraseña en Configuración." },
+    GOOGLE_TOKEN_INVALIDO: { status: HttpStatus.BAD_REQUEST, message: "No se pudo validar el inicio de sesión con Google." },
+    GOOGLE_EMAIL_NO_VERIFICADO: { status: HttpStatus.FORBIDDEN, message: "Tu cuenta de Google no tiene un email verificado." },
+    GOOGLE_NO_CONFIGURADO: { status: HttpStatus.SERVICE_UNAVAILABLE, message: "El inicio de sesión con Google no está configurado." },
+    VINCULACION_REQUIERE_CONTRASENA: { status: HttpStatus.CONFLICT, message: "Ya tenés una cuenta con este email. Ingresá tu contraseña para vincular Google." },
+    CONTRASENA_INCORRECTA: { status: HttpStatus.BAD_REQUEST, message: "La contraseña es incorrecta." },
 
     NO_AUTORIZADO: { status: HttpStatus.FORBIDDEN, message: "No autorizado" },
     PAGO_PENDIENTE_NOT_FOUND: { status: HttpStatus.NOT_FOUND, message: "Pago pendiente no encontrado" },

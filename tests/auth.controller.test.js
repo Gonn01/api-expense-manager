@@ -33,18 +33,18 @@ describe("AuthController", () => {
 
             await controller.register(req, res);
 
-            expect(authService.register).toHaveBeenCalledWith("Juan", "juan@test.com", "1234", null);
+            expect(authService.register).toHaveBeenCalledWith("Juan", "juan@test.com", "1234");
             expect(res.json).toHaveBeenCalledWith({ message: "Usuario creado con éxito" });
         });
 
-        it("pasa firebaseId cuando se envía", async () => {
+        it("ignora un firebaseId enviado por el cliente", async () => {
             const req = makeReq({ body: { name: "Juan", email: "juan@test.com", password: "1234", firebaseId: "fb123" } });
             const res = makeRes();
             authService.register.mockResolvedValue();
 
             await controller.register(req, res);
 
-            expect(authService.register).toHaveBeenCalledWith("Juan", "juan@test.com", "1234", "fb123");
+            expect(authService.register).toHaveBeenCalledWith("Juan", "juan@test.com", "1234");
         });
 
         it("responde 400 cuando faltan campos obligatorios", async () => {
@@ -107,18 +107,18 @@ describe("AuthController", () => {
 
     describe("firebaseLogin", () => {
         it("responde con token cuando el login firebase es exitoso", async () => {
-            const req = makeReq({ body: { firebaseId: "fb123", name: "Juan", email: "juan@test.com", avatar: "https://avatar.url" } });
+            const req = makeReq({ body: { idToken: "id-token", password: "1234", discardPassword: false } });
             const res = makeRes();
             authService.firebaseLogin.mockResolvedValue({ token: "jwt-token" });
 
             await controller.firebaseLogin(req, res);
 
-            expect(authService.firebaseLogin).toHaveBeenCalledWith("Juan", "juan@test.com", "https://avatar.url", "fb123");
+            expect(authService.firebaseLogin).toHaveBeenCalledWith("id-token", { password: "1234", discardPassword: false });
             expect(res.json).toHaveBeenCalledWith({ message: "Login exitoso", data: { token: "jwt-token" } });
         });
 
-        it("responde 400 cuando falta firebaseId", async () => {
-            const req = makeReq({ body: { name: "Juan", email: "juan@test.com" } });
+        it("responde 400 cuando solo llegan datos sin idToken", async () => {
+            const req = makeReq({ body: { firebaseId: "fb123", name: "Juan", email: "juan@test.com" } });
             const res = makeRes();
 
             await controller.firebaseLogin(req, res);
@@ -129,7 +129,7 @@ describe("AuthController", () => {
         });
 
         it("responde 500 cuando el servicio lanza un error", async () => {
-            const req = makeReq({ body: { firebaseId: "fb123" } });
+            const req = makeReq({ body: { idToken: "id-token" } });
             const res = makeRes();
             authService.firebaseLogin.mockRejectedValue(new Error("DB error"));
 

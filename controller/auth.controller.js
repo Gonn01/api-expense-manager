@@ -8,15 +8,13 @@ export class AuthController {
 
     register = async (req, res) => {
         try {
-            const { name, email, password, firebaseId } = req.body;
-
-            const firebaseIdFinal = firebaseId ?? null;
+            const { name, email, password } = req.body;
 
             if (!name || !email || !password) {
                 return badRequest(res, "Faltan campos");
             }
 
-            await this.authService.register(name, email, password, firebaseIdFinal);
+            await this.authService.register(name, email, password);
 
             res.json({
                 message: "Usuario creado con éxito",
@@ -49,12 +47,12 @@ export class AuthController {
 
     firebaseLogin = async (req, res) => {
         try {
-            const { firebaseId, name, email, avatar } = req.body;
+            const { idToken, password, discardPassword } = req.body;
 
-            if (!firebaseId) {
+            if (typeof idToken !== "string" || !idToken) {
                 return badRequest(res, "Token faltante");
             }
-            const response = await this.authService.firebaseLogin(name, email, avatar, firebaseId);
+            const response = await this.authService.firebaseLogin(idToken, { password, discardPassword });
             res.json({
                 message: "Login exitoso",
                 data: response,

@@ -2,6 +2,8 @@ import { Currency, normalizeCurrency } from "../utils/enums.js";
 import { handleError, badRequest } from "../utils/errors.js";
 import { PUSH_LANGUAGES } from "../utils/push-messages.js";
 
+const MIN_PASSWORD_LENGTH = 6;
+
 export class UserController {
     constructor(userService) {
         this.userService = userService;
@@ -61,6 +63,31 @@ export class UserController {
                 message: "Sueldo actualizado",
                 data: updated,
             });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    };
+
+    getPasswordStatus = async (req, res) => {
+        try {
+            const status = await this.userService.getPasswordStatus(req.session.userId);
+            return res.json({ data: status });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    };
+
+    updatePassword = async (req, res) => {
+        try {
+            const { current_password: currentPassword, new_password: newPassword } = req.body;
+
+            if (typeof newPassword !== "string" || newPassword.length < MIN_PASSWORD_LENGTH) {
+                return badRequest(res, `La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres`);
+            }
+
+            const status = await this.userService.updatePassword(req.session.userId, currentPassword, newPassword);
+
+            return res.json({ message: "Contraseña actualizada", data: status });
         } catch (err) {
             return handleError(res, err);
         }

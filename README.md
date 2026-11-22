@@ -44,6 +44,8 @@ PUSHER_CLUSTER=sa1
 
 BEAMS_INSTANCE_ID=
 BEAMS_SECRET_KEY=
+
+FIREBASE_PROJECT_ID=purchase-app-tp
 ```
 
 | Variable | Obligatoria | Para qué se usa |
@@ -53,6 +55,7 @@ BEAMS_SECRET_KEY=
 | `PORT` | No | Puerto HTTP. Por defecto `3000`. |
 | `PUSHER_APP_ID`, `PUSHER_KEY`, `PUSHER_SECRET`, `PUSHER_CLUSTER` | No | Credenciales de Pusher Channels para publicar los eventos de gastos compartidos. |
 | `BEAMS_INSTANCE_ID`, `BEAMS_SECRET_KEY` | No | Credenciales de Pusher Beams para emitir tokens y enviar notificaciones push a Android. |
+| `FIREBASE_PROJECT_ID` | Para entrar con Google | Proyecto de Firebase contra el que se verifican los ID tokens. Sin esta variable, `POST /api/auth/firebase-login` responde 503 `GOOGLE_NO_CONFIGURADO`. |
 
 ## Base de datos
 

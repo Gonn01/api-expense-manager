@@ -35,6 +35,8 @@ const { default: routesIndex } = await import("../routes/index.js");
 const PROTECTED_ROUTES = [
     ["put", "/user/preferred-currency"],
     ["put", "/user/sueldo"],
+    ["get", "/user/password-status"],
+    ["put", "/user/password"],
     ["get", "/user/push-token"],
     ["put", "/user/push-language"],
     ["get", "/entidades-financieras"],
