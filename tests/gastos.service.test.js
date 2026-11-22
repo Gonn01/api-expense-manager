@@ -74,7 +74,15 @@ describe("GastosService", () => {
             ]),
             createGastoLog: vi.fn(async (gastoId, movementType) => [{ id: 800, purchase_id: gastoId, movement_type: movementType }]),
             setPairedMovement: vi.fn(),
-            createGastoLogs: vi.fn(async (logs) => logs.map((l, i) => ({ id: 900 + i, purchase_id: l.gastoId, movement_type: l.movementType }))),
+            setPairedMovements: vi.fn(),
+            createGastoLogs: vi.fn(async (logs) =>
+                logs.map((l, i) => ({
+                    id: 900 + i,
+                    purchase_id: l.gastoId,
+                    movement_type: l.movementType,
+                    paired_movement_id: l.pairedMovementId ?? null,
+                })),
+            ),
             createEntidadLog: vi.fn(),
             revertPaymentsByIds: vi.fn(async (ids) => ids.map((id) => ({ id, amount: 100, purchase_id: 10 }))),
             getPaymentById: vi.fn(async (id) => [{ id: Number(id), purchase_id: 10, movement_type: "PAYMENT", amount: 100 }]),
@@ -442,7 +450,7 @@ describe("GastosService", () => {
             let pagosCompartidosService;
 
             beforeEach(() => {
-                pagosCompartidosService = { confirmarDesdeCopia: vi.fn() };
+                pagosCompartidosService = { confirmarDesdeCopia: vi.fn(), confirmarDesdeCopias: vi.fn() };
                 service = new GastosService({
                     gastosRepository,
                     movementsRepository,
@@ -463,7 +471,10 @@ describe("GastosService", () => {
 
                 expect(kept).toEqual([10]);
                 expect(movementsRepository.createGastoLogs).toHaveBeenCalledWith([]);
-                expect(pagosCompartidosService.confirmarDesdeCopia).toHaveBeenCalledWith(PEND, 10, OWNER);
+                expect(pagosCompartidosService.confirmarDesdeCopias).toHaveBeenCalledWith(
+                    [{ pend: PEND, copiaId: 10 }],
+                    OWNER,
+                );
                 expect(payments[10]).toEqual({ movement_id: 77, shared: true, role: "confirmacion", counterparty_name: "Juan" });
             });
 
@@ -473,7 +484,7 @@ describe("GastosService", () => {
                 const { kept } = await service.effectSettlementBatch([10], OWNER);
 
                 expect(kept).toEqual([10]);
-                expect(pagosCompartidosService.confirmarDesdeCopia).toHaveBeenCalled();
+                expect(pagosCompartidosService.confirmarDesdeCopias).toHaveBeenCalled();
             });
 
             it("el pago directo también confirma el pendiente de la otra persona", async () => {
@@ -648,11 +659,17 @@ describe("GastosService", () => {
                     status: "PENDING_APPROVAL",
                 }),
             );
-            expect(movementsRepository.createGastoLog).toHaveBeenCalledWith(
-                11, "PAYMENT", 100, "2026-10-01", undefined, expect.any(String),
-            );
-            expect(movementsRepository.setPairedMovement).toHaveBeenCalledWith(500, 800);
-            expect(movementsRepository.setPairedMovement).toHaveBeenCalledWith(800, 500);
+            expect(movementsRepository.createGastoLogs).toHaveBeenCalledWith([
+                expect.objectContaining({
+                    gastoId: 11,
+                    movementType: "PAYMENT",
+                    amount: 100,
+                    paymentDate: "2026-10-01",
+                    detail: expect.any(String),
+                    pairedMovementId: 500,
+                }),
+            ]);
+            expect(movementsRepository.setPairedMovements).toHaveBeenCalledWith([[500, 900]]);
             expect(gastosRepository.updateStatus).toHaveBeenCalledWith(10, "PENDING_APPROVAL");
             expect(settlementRepository.removeItem).toHaveBeenCalledWith(5, 10);
             expect(triggerCompartidos).toHaveBeenCalledWith(INTRUSO, "compartido.nuevo", { gastoId: 10 });

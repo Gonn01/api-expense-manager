@@ -212,7 +212,7 @@ describe("monedas", () => {
         expect((await createIn(currency)).status).toBe(201);
     });
 
-    it.fails("BUG CONOCIDO: permite crear un gasto en todas las monedas declaradas", async () => {
+    it("permite crear un gasto en todas las monedas declaradas", async () => {
         const rejected = [];
         for (const currency of Object.values(Currency)) {
             const response = await createIn(currency);

@@ -305,4 +305,41 @@ describe("baja de una entidad compartida", () => {
         expect(gasto.deleted).toBe(true);
         expect((await ana.post(`/gastos/${shared.ownerExpense}/restaurar`)).status).toBe(409);
     });
+
+    it("cierra en lote gastos compartidos en distintos estados", async () => {
+        const copyOf = async (expense) => {
+            const [row] = await executeQuery("SELECT id FROM purchases WHERE shared_from_id = $1", [expense]);
+            return Number(row.id);
+        };
+        const sinAceptar = await createExpense(ana, shared.ownerEntity, { name: "Sin aceptar" });
+        const copiaSinAceptar = await copyOf(sinAceptar);
+        const pagadoPorAna = await createExpense(ana, shared.ownerEntity, { name: "Pagado por Ana" });
+        const copiaPagadoPorAna = await copyOf(pagadoPorAna);
+        await executeQuery(
+            `UPDATE purchases
+             SET status = 'ACTIVE',
+                 financial_entity_id = (SELECT financial_entity_id FROM purchases WHERE id = $1)
+             WHERE id = $2`,
+            [shared.copyId, copiaPagadoPorAna],
+        );
+        await executeQuery("UPDATE purchases SET status = 'ACTIVE' WHERE id = $1", [pagadoPorAna]);
+        await beto.post(`/gastos/${shared.copyId}/settle-quota`, { direct: true });
+        await ana.post(`/gastos/${pagadoPorAna}/settle-quota`, { direct: true });
+        sentEvents.length = 0;
+
+        const response = await ana.delete(`/entidades-financieras/${shared.ownerEntity}`);
+
+        expect(response.status).toBe(200);
+        const pagoBeto = await latestMovement(shared.copyId, "PAYMENT");
+        const pagoEspejo = await latestMovement(shared.ownerExpense, "PAYMENT");
+        expect(Number(pagoBeto.paired_movement_id)).toBe(Number(pagoEspejo.id));
+        expect(Number(pagoEspejo.paired_movement_id)).toBe(Number(pagoBeto.id));
+        expect(await countMovements(shared.copyId, "PENDING_PAYMENT")).toBe(0);
+        expect(await countMovements(pagadoPorAna, "PENDING_PAYMENT")).toBe(0);
+        expect(await countMovements(pagadoPorAna, "PAYMENT_WITHDRAWN")).toBe(1);
+        const [copia] = await executeQuery("SELECT deleted FROM purchases WHERE id = $1", [copiaSinAceptar]);
+        expect(copia.deleted).toBe(true);
+        expect(await countMovements(copiaSinAceptar, "DELETE")).toBe(1);
+        expect(sentEvents.filter((e) => e.event === "compartido.desvinculado")).toHaveLength(3);
+    });
 });

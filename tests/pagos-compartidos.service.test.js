@@ -28,16 +28,19 @@ describe("PagosCompartidosService", () => {
                     : [{ sibling_id: 20, counterparty_user_id: EMISOR }],
             ),
             getById: vi.fn(async () => [COPIA]),
+            getByIds: vi.fn(async () => [COPIA]),
             getByIdsWithOwner: vi.fn(async ([id], userId) => [
                 { id: Number(id), owned: (String(id) === "20" && userId === EMISOR) || (String(id) === "30" && userId === RECEPTOR) },
             ]),
             getEntityOwnerByPurchaseId: vi.fn(async (id) => [{ user_id: String(id) === "20" ? EMISOR : RECEPTOR }]),
             clearFavoriteIfFinalized: vi.fn(),
+            clearFavoritesIfFinalized: vi.fn(),
             getUserName: vi.fn(async () => [{ name: "Ana" }]),
             lockPurchases: vi.fn(),
-            delete: vi.fn(),
-            getSharedState: vi.fn(async () => [
+            deleteMany: vi.fn(),
+            getSharedStates: vi.fn(async () => [
                 {
+                    purchase_id: COPIA.id,
                     gasto_name: "Heladera",
                     was_shared: true,
                     sibling_id: 20,
@@ -49,10 +52,21 @@ describe("PagosCompartidosService", () => {
         movementsRepository = {
             getPendingPaymentById: vi.fn(async () => [PEND]),
             confirmPendingPayment: vi.fn(async () => [{ ...PEND, movement_type: "PAYMENT" }]),
+            confirmPendingPayments: vi.fn(async (ids) => ids.map((id) => ({ ...PEND, id, movement_type: "PAYMENT" }))),
             closePendingPayment: vi.fn(async (id, type) => [{ ...PEND, id, movement_type: type }]),
+            closePendingPayments: vi.fn(async (ids, type) => ids.map((id) => ({ ...PEND, id, movement_type: type }))),
             createGastoLog: vi.fn(async (purchaseId, type) => [{ id: 60, purchase_id: purchaseId, movement_type: type }]),
+            createGastoLogs: vi.fn(async (logs) =>
+                logs.map((log, i) => ({
+                    id: 60 + i,
+                    purchase_id: log.gastoId,
+                    movement_type: log.movementType,
+                    paired_movement_id: log.pairedMovementId ?? null,
+                })),
+            ),
             setPairedMovement: vi.fn(),
-            getPendingPaymentsByPurchases: vi.fn(async ([id]) => (id === 20 ? [PEND] : [])),
+            setPairedMovements: vi.fn(),
+            getPendingPaymentsByPurchases: vi.fn(async (ids) => (ids.includes(20) ? [PEND] : [])),
             getPendingReversalIds: vi.fn(async () => []),
             getPaymentById: vi.fn(async () => [
                 { id: 50, purchase_id: 20, movement_type: "PAYMENT", paired_movement_id: 60, reversal_requested_by_user_id: null },
@@ -157,16 +171,20 @@ describe("PagosCompartidosService", () => {
         it("confirma los pagos pendientes de la otra persona y le avisa que ya no es compartido", async () => {
             const result = await service.cerrarCompartido(COPIA.id, RECEPTOR);
 
-            expect(movementsRepository.confirmPendingPayment).toHaveBeenCalledWith(PEND.id);
-            expect(movementsRepository.createGastoLog).toHaveBeenCalledWith(
-                COPIA.id,
-                "PAYMENT",
-                COPIA.amount_per_quota,
-                PEND.payment_date,
-                EMISOR,
-                expect.any(String),
-            );
-            expect(movementsRepository.closePendingPayment).not.toHaveBeenCalledWith(PEND.id, "PAYMENT_REJECTED");
+            expect(movementsRepository.confirmPendingPayments).toHaveBeenCalledWith([PEND.id]);
+            expect(movementsRepository.createGastoLogs).toHaveBeenCalledWith([
+                {
+                    gastoId: COPIA.id,
+                    movementType: "PAYMENT",
+                    amount: COPIA.amount_per_quota,
+                    paymentDate: PEND.payment_date,
+                    createdByUserId: EMISOR,
+                    detail: expect.any(String),
+                    pairedMovementId: PEND.id,
+                },
+            ]);
+            expect(movementsRepository.setPairedMovements).toHaveBeenCalledWith([[PEND.id, 60]]);
+            expect(movementsRepository.closePendingPayments).not.toHaveBeenCalledWith([PEND.id], "PAYMENT_WITHDRAWN");
             expect(triggerCompartidos).toHaveBeenCalledWith(EMISOR, PusherEvent.COMPARTIDO_DESVINCULADO, {
                 gastoId: 20,
                 gastoName: "Heladera",
@@ -179,22 +197,23 @@ describe("PagosCompartidosService", () => {
         });
 
         it("retira los pagos propios y cancela las reversiones pendientes", async () => {
-            movementsRepository.getPendingPaymentsByPurchases.mockImplementation(async ([id]) =>
-                id === COPIA.id ? [{ ...PEND, id: 51, purchase_id: COPIA.id }] : [],
-            );
+            movementsRepository.getPendingPaymentsByPurchases.mockResolvedValue([
+                { ...PEND, id: 51, purchase_id: COPIA.id },
+            ]);
             movementsRepository.getPendingReversalIds.mockResolvedValue([{ id: 70 }, { id: 71 }]);
 
             await service.cerrarCompartido(COPIA.id, RECEPTOR);
 
-            expect(movementsRepository.closePendingPayment).toHaveBeenCalledWith(51, "PAYMENT_WITHDRAWN");
+            expect(movementsRepository.closePendingPayments).toHaveBeenCalledWith([51], "PAYMENT_WITHDRAWN");
+            expect(movementsRepository.confirmPendingPayments).not.toHaveBeenCalled();
             expect(movementsRepository.clearReversalRequest).toHaveBeenCalledWith([70, 71]);
             expect(movementsRepository.logPaymentEvent).toHaveBeenCalledWith([70, 71], "REVERSAL_CANCELLED", RECEPTOR);
         });
 
         it("cancela la edición pendiente", async () => {
             const edicionesRepository = {
-                getPendingByPurchase: vi.fn(async () => [{ id: 9 }]),
-                resolve: vi.fn(),
+                getPendingByPurchases: vi.fn(async () => [{ id: 9, purchase_id: COPIA.id, sibling_purchase_id: 20 }]),
+                resolveMany: vi.fn(),
             };
             service = new PagosCompartidosService({
                 gastosRepository,
@@ -206,19 +225,53 @@ describe("PagosCompartidosService", () => {
 
             await service.cerrarCompartido(COPIA.id, RECEPTOR);
 
-            expect(edicionesRepository.resolve).toHaveBeenCalledWith(9, "CANCELLED", RECEPTOR);
+            expect(edicionesRepository.resolveMany).toHaveBeenCalledWith([9], "CANCELLED", RECEPTOR);
+            expect(movementsRepository.createGastoLogs).toHaveBeenCalledWith([
+                { gastoId: COPIA.id, movementType: "EDIT_CANCELLED", createdByUserId: RECEPTOR },
+                { gastoId: 20, movementType: "EDIT_CANCELLED", createdByUserId: RECEPTOR },
+            ]);
+        });
+
+        it("cierra varios gastos con una sola tanda de consultas", async () => {
+            gastosRepository.getSharedStates.mockResolvedValue([
+                { purchase_id: 30, gasto_name: "A", sibling_id: 20, sibling_status: "ACTIVE", counterparty_user_id: EMISOR },
+                { purchase_id: 31, gasto_name: "B", sibling_id: 21, sibling_status: "ACTIVE", counterparty_user_id: EMISOR },
+            ]);
+            movementsRepository.getPendingPaymentsByPurchases.mockResolvedValue([]);
+
+            const result = await service.cerrarCompartidos([30, 31, 32], RECEPTOR);
+
+            expect(gastosRepository.getSharedStates).toHaveBeenCalledTimes(2);
+            expect(gastosRepository.lockPurchases).toHaveBeenCalledTimes(1);
+            expect(movementsRepository.getPendingPaymentsByPurchases).toHaveBeenCalledTimes(1);
+            expect(gastosRepository.getUserName).toHaveBeenCalledTimes(1);
+            expect(triggerCompartidos).toHaveBeenCalledTimes(2);
+            expect(result).toEqual([
+                { siblingId: 20, confirmedPayments: 0 },
+                { siblingId: 21, confirmedPayments: 0 },
+            ]);
+        });
+
+        it("no registra más pagos que las cuotas que le quedan a la copia", async () => {
+            gastosRepository.getByIds.mockResolvedValue([{ ...COPIA, payed_quotas: 2, number_of_quotas: 3 }]);
+            movementsRepository.getPendingPaymentsByPurchases.mockResolvedValue([PEND, { ...PEND, id: 52 }]);
+
+            await service.cerrarCompartido(COPIA.id, RECEPTOR);
+
+            expect(movementsRepository.confirmPendingPayments).toHaveBeenCalledWith([PEND.id, 52]);
+            expect(movementsRepository.createGastoLogs.mock.calls[0][0]).toHaveLength(1);
         });
 
         it.each(["PENDING_APPROVAL", "REJECTED"])("da de baja la copia todavía sin aceptar (%s)", async (sibling_status) => {
-            gastosRepository.getSharedState.mockResolvedValue([
-                { gasto_name: "Heladera", was_shared: true, sibling_id: 20, sibling_status, counterparty_user_id: EMISOR },
+            gastosRepository.getSharedStates.mockResolvedValue([
+                { purchase_id: COPIA.id, gasto_name: "Heladera", was_shared: true, sibling_id: 20, sibling_status, counterparty_user_id: EMISOR },
             ]);
 
             await service.cerrarCompartido(COPIA.id, RECEPTOR);
 
-            expect(gastosRepository.delete).toHaveBeenCalledWith(20);
-            expect(movementsRepository.createGastoLog).toHaveBeenCalledWith(20, "DELETE");
-            expect(movementsRepository.confirmPendingPayment).not.toHaveBeenCalled();
+            expect(gastosRepository.deleteMany).toHaveBeenCalledWith([20]);
+            expect(movementsRepository.createGastoLogs).toHaveBeenCalledWith([{ gastoId: 20, movementType: "DELETE" }]);
+            expect(movementsRepository.confirmPendingPayments).not.toHaveBeenCalled();
             expect(triggerCompartidos).toHaveBeenCalledWith(
                 EMISOR,
                 PusherEvent.COMPARTIDO_DESVINCULADO,
@@ -227,7 +280,7 @@ describe("PagosCompartidosService", () => {
         });
 
         it("no hace nada si el gasto no tiene otra parte activa", async () => {
-            gastosRepository.getSharedState.mockResolvedValue([{ was_shared: true, sibling_id: null }]);
+            gastosRepository.getSharedStates.mockResolvedValue([{ purchase_id: COPIA.id, was_shared: true, sibling_id: null }]);
 
             expect(await service.cerrarCompartido(COPIA.id, RECEPTOR)).toBeNull();
             expect(gastosRepository.lockPurchases).not.toHaveBeenCalled();

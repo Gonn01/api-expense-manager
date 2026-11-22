@@ -109,6 +109,17 @@ export class GastosRepository {
     );
   }
 
+  async getByIds(ids) {
+    if (!ids.length) return [];
+    const placeholders = ids.map((_, i) => `$${i + 1}`).join(", ");
+    return await executeQuery(
+      `SELECT p.*, ${CALCULATED_FIELDS}
+       FROM purchases p
+       WHERE p.deleted = false AND p.id IN (${placeholders})`,
+      ids
+    );
+  }
+
   async getOwnedIds(ids, userId) {
     if (!ids.length) return [];
     const placeholders = ids.map((_, i) => `$${i + 2}`).join(", ");
@@ -222,20 +233,6 @@ export class GastosRepository {
     return rows[0]?.count ?? 0;
   }
 
-  async settleQuotasLote(ids) {
-    const updated = [];
-    for (const id of ids) {
-      const result = await executeQuery(
-        `SELECT p.*, ${CALCULATED_FIELDS}
-         FROM purchases p
-         WHERE p.id = $1 AND p.deleted = false`,
-        [id]
-      );
-      if (result.length > 0) updated.push(result[0]);
-    }
-    return updated;
-  }
-
   async update(id, { name, amount, image_url, fixed_expense, type, number_of_quotas, currency_type, financial_entity_id }) {
     return await executeQuery(
       `UPDATE purchases
@@ -261,6 +258,17 @@ export class GastosRepository {
     return await executeQuery(
       `UPDATE purchases SET deleted = true, deleted_with_entity = false WHERE id = $1 RETURNING id`,
       [id]
+    );
+  }
+
+  async deleteMany(ids) {
+    if (!ids.length) return [];
+    const placeholders = ids.map((_, i) => `$${i + 1}`).join(", ");
+    return await executeQuery(
+      `UPDATE purchases SET deleted = true, deleted_with_entity = false
+       WHERE id IN (${placeholders})
+       RETURNING id`,
+      ids
     );
   }
 
@@ -525,8 +533,16 @@ export class GastosRepository {
   }
 
   async getSharedState(purchaseId) {
+    return await this.getSharedStates([purchaseId]);
+  }
+
+  async getSharedStates(purchaseIds) {
+    const unique = [...new Set(purchaseIds.map(String))];
+    if (!unique.length) return [];
+    const placeholders = unique.map((_, i) => `$${i + 1}`).join(", ");
     return await executeQuery(
-      `SELECT
+      `SELECT DISTINCT ON (p.id)
+          p.id AS purchase_id,
           p.name AS gasto_name,
           (p.shared_from_id IS NOT NULL
            OR EXISTS (SELECT 1 FROM purchases c WHERE c.shared_from_id = p.id)) AS was_shared,
@@ -542,9 +558,9 @@ export class GastosRepository {
        LEFT JOIN financial_entities fe ON fe.id = sib.financial_entity_id
        LEFT JOIN users cp
          ON cp.id = CASE WHEN p.shared_from_id IS NULL THEN sib.receiver_user_id ELSE fe.user_id END
-       WHERE p.id = $1
-       LIMIT 1`,
-      [purchaseId]
+       WHERE p.id IN (${placeholders})
+       ORDER BY p.id`,
+      unique
     );
   }
 

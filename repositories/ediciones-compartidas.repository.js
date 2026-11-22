@@ -18,6 +18,18 @@ export class EdicionesCompartidasRepository {
         );
     }
 
+    async getPendingByPurchases(purchaseIds) {
+        if (!purchaseIds.length) return [];
+        const placeholders = purchaseIds.map((_, i) => `$${i + 1}`).join(", ");
+        return await executeQuery(
+            `SELECT ${COLUMNS}
+             FROM purchase_edit_requests
+             WHERE status = 'PENDING'
+               AND (purchase_id IN (${placeholders}) OR sibling_purchase_id IN (${placeholders}))`,
+            purchaseIds,
+        );
+    }
+
     async create({ purchaseId, siblingPurchaseId, requestedByUserId, counterpartyUserId, changes }) {
         return await executeQuery(
             `INSERT INTO purchase_edit_requests
@@ -25,6 +37,18 @@ export class EdicionesCompartidasRepository {
              VALUES ($1, $2, $3, $4, $5::jsonb)
              RETURNING ${COLUMNS}`,
             [purchaseId, siblingPurchaseId, requestedByUserId, counterpartyUserId, JSON.stringify(changes)],
+        );
+    }
+
+    async resolveMany(ids, status, userId) {
+        if (!ids.length) return [];
+        const placeholders = ids.map((_, i) => `$${i + 3}`).join(", ");
+        return await executeQuery(
+            `UPDATE purchase_edit_requests
+             SET status = $1, resolved_at = NOW(), resolved_by_user_id = $2
+             WHERE id IN (${placeholders}) AND status = 'PENDING'
+             RETURNING ${COLUMNS}`,
+            [status, userId, ...ids],
         );
     }
 

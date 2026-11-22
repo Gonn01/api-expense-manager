@@ -648,20 +648,18 @@ export class GastosService {
     async #copiarPagos(gastoId, copiaId) {
         const movimientos = await this.movementsRepository.getMovementsByGasto(gastoId);
         const pagos = movimientos.filter((m) => m.movement_type === MovementType.PAYMENT).reverse();
-        for (const pago of pagos) {
-            const [pagoCopia] = await this.movementsRepository.createGastoLog(
-                copiaId,
-                MovementType.PAYMENT,
-                pago.amount,
-                pago.payment_date,
-                pago.created_by_user_id,
-                "Pago registrado antes de compartir el gasto",
-            );
-            await Promise.all([
-                this.movementsRepository.setPairedMovement(pago.id, pagoCopia.id),
-                this.movementsRepository.setPairedMovement(pagoCopia.id, pago.id),
-            ]);
-        }
+        const copias = await this.movementsRepository.createGastoLogs(
+            pagos.map((pago) => ({
+                gastoId: copiaId,
+                movementType: MovementType.PAYMENT,
+                amount: pago.amount,
+                paymentDate: pago.payment_date,
+                createdByUserId: pago.created_by_user_id,
+                detail: "Pago registrado antes de compartir el gasto",
+                pairedMovementId: pago.id,
+            })),
+        );
+        await this.movementsRepository.setPairedMovements(copias.map((c) => [c.paired_movement_id, c.id]));
     }
 
     async #crearCompraConLogs({
@@ -1027,8 +1025,11 @@ export class GastosService {
                 };
             }
 
+            await this.pagosCompartidosService?.confirmarDesdeCopias(
+                confirmaciones.map(({ pend, gasto }) => ({ pend, copiaId: gasto.id })),
+                userId,
+            );
             for (const { pend, gasto, sibling } of confirmaciones) {
-                await this.pagosCompartidosService.confirmarDesdeCopia(pend, gasto.id, userId);
                 payments[gasto.id] = {
                     movement_id: pend.id,
                     shared: true,

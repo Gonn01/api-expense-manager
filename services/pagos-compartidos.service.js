@@ -3,6 +3,8 @@ import { triggerCompartidos } from "../utils/pusher.js";
 import { customError, ErrorCode } from "../utils/errors.js";
 import { withTransaction } from "../db.js";
 
+const DETALLE_PAGO_CONFIRMADO = "Pago confirmado de gasto compartido";
+
 export class PagosCompartidosService {
     constructor({
         gastosRepository,
@@ -62,12 +64,12 @@ export class PagosCompartidosService {
         return pend;
     }
 
-    async #registrarPagoEnCopia(copia, pend) {
-        if (!copia) return null;
+    #copiaSaldada(copia) {
+        return !copia.fixed_expense && (Number(copia.payed_quotas) || 0) >= Number(copia.number_of_quotas);
+    }
 
-        const yaSaldada =
-            !copia.fixed_expense && (Number(copia.payed_quotas) || 0) >= Number(copia.number_of_quotas);
-        if (yaSaldada) return null;
+    async #registrarPagoEnCopia(copia, pend) {
+        if (!copia || this.#copiaSaldada(copia)) return null;
 
         const [mirror] = await this.movementsRepository.createGastoLog(
             copia.id,
@@ -75,9 +77,45 @@ export class PagosCompartidosService {
             copia.amount_per_quota,
             pend.payment_date,
             pend.created_by_user_id,
-            "Pago confirmado de gasto compartido",
+            DETALLE_PAGO_CONFIRMADO,
         );
         return mirror ?? null;
+    }
+
+    async #confirmarPendientes(items) {
+        if (!items.length) return;
+
+        const pendIds = items.map(({ pend }) => pend.id);
+        const copiaIds = [...new Set(items.map(({ copiaId }) => String(copiaId)))];
+        const [confirmados, copias] = await Promise.all([
+            this.movementsRepository.confirmPendingPayments(pendIds),
+            this.gastosRepository.getByIds(copiaIds),
+        ]);
+        if (confirmados.length !== pendIds.length) throw customError(ErrorCode.PAGO_PENDIENTE_NOT_FOUND);
+
+        const copiaPorId = new Map(copias.map((c) => [String(c.id), { ...c }]));
+        const logs = [];
+        for (const { pend, copiaId } of items) {
+            const copia = copiaPorId.get(String(copiaId));
+            if (!copia || this.#copiaSaldada(copia)) continue;
+            copia.payed_quotas = (Number(copia.payed_quotas) || 0) + 1;
+            logs.push({
+                gastoId: copia.id,
+                movementType: MovementType.PAYMENT,
+                amount: copia.amount_per_quota,
+                paymentDate: pend.payment_date,
+                createdByUserId: pend.created_by_user_id,
+                detail: DETALLE_PAGO_CONFIRMADO,
+                pairedMovementId: pend.id,
+            });
+        }
+
+        const mirrors = await this.movementsRepository.createGastoLogs(logs);
+        const afectados = [...new Set(items.flatMap(({ pend, copiaId }) => [String(pend.purchase_id), String(copiaId)]))];
+        await Promise.all([
+            this.movementsRepository.setPairedMovements(mirrors.map((m) => [m.paired_movement_id, m.id])),
+            this.gastosRepository.clearFavoritesIfFinalized(afectados),
+        ]);
     }
 
     async #confirmarPendiente(pend, copiaId, alCerrar = []) {
@@ -126,6 +164,19 @@ export class PagosCompartidosService {
         return result;
     }
 
+    async confirmarDesdeCopias(items, userId) {
+        if (!items.length) return;
+        await this.#confirmarPendientes(items);
+        const actorName = await this.#actorName(userId);
+        await Promise.all(
+            items.map(({ pend }) =>
+                this.#notificar(pend.created_by_user_id, PusherEvent.PAGO_CONFIRMADO, pend.purchase_id, userId, {
+                    actorName,
+                }),
+            ),
+        );
+    }
+
     async rechazar(movementId, userId) {
         return this.tx(async () => {
             const { pend, actorName, session } = await this.#inicioRespuesta(movementId, userId);
@@ -166,43 +217,75 @@ export class PagosCompartidosService {
     }
 
     async cerrarCompartido(gastoId, userId) {
-        const [inicial] = await this.gastosRepository.getSharedState(gastoId);
-        if (!inicial?.sibling_id) return null;
-
-        await this.gastosRepository.lockPurchases([gastoId, inicial.sibling_id]);
-        const [estado] = await this.gastosRepository.getSharedState(gastoId);
-        if (!estado?.sibling_id) return null;
-
-        const confirmedPayments =
-            estado.sibling_status === ExpenseStatus.ACTIVE
-                ? await this.#resolverPagosAlCerrar(gastoId, estado.sibling_id, userId)
-                : await this.#darDeBajaCopiaSinAceptar(estado.sibling_id);
-        await this.#cancelarEdicionAlCerrar(gastoId, estado.sibling_id, userId);
-
-        if (estado.counterparty_user_id != null) {
-            await triggerCompartidos(estado.counterparty_user_id, PusherEvent.COMPARTIDO_DESVINCULADO, {
-                gastoId: estado.sibling_id,
-                gastoName: estado.gasto_name,
-                actorId: userId,
-                actorName: await this.#actorName(userId),
-                confirmedPayments,
-            });
-        }
-        return { siblingId: estado.sibling_id, confirmedPayments };
+        const [cierre] = await this.cerrarCompartidos([gastoId], userId);
+        return cierre ?? null;
     }
 
-    async #resolverPagosAlCerrar(gastoId, siblingId, userId) {
-        const [delOtro, propios, reversiones] = await Promise.all([
-            this.movementsRepository.getPendingPaymentsByPurchases([siblingId]),
-            this.movementsRepository.getPendingPaymentsByPurchases([gastoId]),
-            this.movementsRepository.getPendingReversalIds([gastoId, siblingId]),
+    async cerrarCompartidos(gastoIds, userId) {
+        const iniciales = await this.#estadosConOtraParte(gastoIds);
+        if (!iniciales.length) return [];
+
+        await this.gastosRepository.lockPurchases(iniciales.flatMap((e) => [e.purchase_id, e.sibling_id]));
+        const estados = await this.#estadosConOtraParte(iniciales.map((e) => e.purchase_id));
+        if (!estados.length) return [];
+
+        const activos = estados.filter((e) => e.sibling_status === ExpenseStatus.ACTIVE);
+        const sinAceptar = estados.filter((e) => e.sibling_status !== ExpenseStatus.ACTIVE);
+        const confirmadosPorGasto = await this.#resolverPagosAlCerrar(activos, userId);
+        await this.#darDeBajaCopiasSinAceptar(sinAceptar.map((e) => e.sibling_id));
+        await this.#cancelarEdicionesAlCerrar(estados.map((e) => e.purchase_id), userId);
+
+        const cierres = estados.map((estado) => ({
+            estado,
+            confirmedPayments: confirmadosPorGasto.get(String(estado.purchase_id)) ?? 0,
+        }));
+        const aNotificar = cierres.filter(({ estado }) => estado.counterparty_user_id != null);
+        const actorName = aNotificar.length ? await this.#actorName(userId) : null;
+        await Promise.all(
+            aNotificar.map(({ estado, confirmedPayments }) =>
+                triggerCompartidos(estado.counterparty_user_id, PusherEvent.COMPARTIDO_DESVINCULADO, {
+                    gastoId: estado.sibling_id,
+                    gastoName: estado.gasto_name,
+                    actorId: userId,
+                    actorName,
+                    confirmedPayments,
+                }),
+            ),
+        );
+        return cierres.map(({ estado, confirmedPayments }) => ({
+            siblingId: estado.sibling_id,
+            confirmedPayments,
+        }));
+    }
+
+    async #estadosConOtraParte(gastoIds) {
+        const estados = await this.gastosRepository.getSharedStates(gastoIds);
+        return estados.filter((e) => e.sibling_id);
+    }
+
+    async #resolverPagosAlCerrar(activos, userId) {
+        const confirmadosPorGasto = new Map();
+        if (!activos.length) return confirmadosPorGasto;
+
+        const gastoPorCopia = new Map(activos.map((e) => [String(e.sibling_id), e.purchase_id]));
+        const involucrados = activos.flatMap((e) => [e.purchase_id, e.sibling_id]);
+        const [pendientes, reversiones] = await Promise.all([
+            this.movementsRepository.getPendingPaymentsByPurchases(involucrados),
+            this.movementsRepository.getPendingReversalIds(involucrados),
         ]);
 
-        for (const pend of propios) {
-            await this.movementsRepository.closePendingPayment(pend.id, MovementType.PAYMENT_WITHDRAWN);
-        }
-        for (const pend of delOtro) {
-            await this.#confirmarPendiente(pend, gastoId);
+        const delOtro = pendientes.filter((p) => gastoPorCopia.has(String(p.purchase_id)));
+        const propios = pendientes.filter((p) => !gastoPorCopia.has(String(p.purchase_id)));
+
+        await this.movementsRepository.closePendingPayments(
+            propios.map((p) => p.id),
+            MovementType.PAYMENT_WITHDRAWN,
+        );
+        const items = delOtro.map((pend) => ({ pend, copiaId: gastoPorCopia.get(String(pend.purchase_id)) }));
+        await this.#confirmarPendientes(items);
+        for (const { copiaId } of items) {
+            const key = String(copiaId);
+            confirmadosPorGasto.set(key, (confirmadosPorGasto.get(key) ?? 0) + 1);
         }
 
         const reversionIds = reversiones.map((r) => r.id);
@@ -212,25 +295,34 @@ export class PagosCompartidosService {
                 this.movementsRepository.logPaymentEvent(reversionIds, MovementType.REVERSAL_CANCELLED, userId),
             ]);
         }
-        return delOtro.length;
+        return confirmadosPorGasto;
     }
 
-    async #darDeBajaCopiaSinAceptar(copiaId) {
+    async #darDeBajaCopiasSinAceptar(copiaIds) {
+        if (!copiaIds.length) return;
         await Promise.all([
-            this.gastosRepository.delete(copiaId),
-            this.movementsRepository.createGastoLog(copiaId, MovementType.DELETE),
+            this.gastosRepository.deleteMany(copiaIds),
+            this.movementsRepository.createGastoLogs(
+                copiaIds.map((gastoId) => ({ gastoId, movementType: MovementType.DELETE })),
+            ),
         ]);
-        return 0;
     }
 
-    async #cancelarEdicionAlCerrar(gastoId, siblingId, userId) {
+    async #cancelarEdicionesAlCerrar(gastoIds, userId) {
         if (!this.edicionesRepository) return;
-        const [edicion] = await this.edicionesRepository.getPendingByPurchase(gastoId);
-        if (!edicion) return;
+        const ediciones = await this.edicionesRepository.getPendingByPurchases(gastoIds);
+        if (!ediciones.length) return;
         await Promise.all([
-            this.edicionesRepository.resolve(edicion.id, "CANCELLED", userId),
-            this.movementsRepository.createGastoLog(gastoId, MovementType.EDIT_CANCELLED, null, null, userId),
-            this.movementsRepository.createGastoLog(siblingId, MovementType.EDIT_CANCELLED, null, null, userId),
+            this.edicionesRepository.resolveMany(ediciones.map((e) => e.id), "CANCELLED", userId),
+            this.movementsRepository.createGastoLogs(
+                ediciones.flatMap((e) =>
+                    [e.purchase_id, e.sibling_purchase_id].map((gastoId) => ({
+                        gastoId,
+                        movementType: MovementType.EDIT_CANCELLED,
+                        createdByUserId: userId,
+                    })),
+                ),
+            ),
         ]);
     }
 

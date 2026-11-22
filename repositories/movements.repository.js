@@ -45,18 +45,21 @@ export class MovementsRepository {
         if (!logs.length) return [];
         const values = [];
         const rows = logs.map((log, i) => {
-            const b = i * 5;
+            const b = i * 7;
             values.push(
                 log.gastoId,
                 log.movementType,
                 log.amount ?? null,
                 log.paymentDate ?? null,
                 log.createdByUserId ?? null,
+                log.detail ?? null,
+                log.pairedMovementId ?? null,
             );
-            return `(NOW(), $${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5})`;
+            return `(NOW(), $${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7})`;
         });
         return await executeQuery(
-            `INSERT INTO purchases_movements (created_at, purchase_id, movement_type, amount, payment_date, created_by_user_id)
+            `INSERT INTO purchases_movements
+                 (created_at, purchase_id, movement_type, amount, payment_date, created_by_user_id, detail, paired_movement_id)
              VALUES ${rows.join(", ")}
              RETURNING *`,
             values
@@ -76,17 +79,27 @@ export class MovementsRepository {
         return await this.closePendingPayment(movementId, "PAYMENT");
     }
 
+    async confirmPendingPayments(movementIds) {
+        return await this.closePendingPayments(movementIds, "PAYMENT");
+    }
+
     async closePendingPayment(movementId, movementType) {
+        return await this.closePendingPayments([movementId], movementType);
+    }
+
+    async closePendingPayments(movementIds, movementType) {
+        if (!movementIds.length) return [];
+        const placeholders = movementIds.map((_, i) => `$${i + 2}`).join(", ");
         return await executeQuery(
             `WITH original AS (
                  SELECT *
                  FROM purchases_movements
-                 WHERE id = $1 AND movement_type = 'PENDING_PAYMENT'
+                 WHERE id IN (${placeholders}) AND movement_type = 'PENDING_PAYMENT'
                  FOR UPDATE
              ),
              resolved AS (
                  UPDATE purchases_movements pm
-                 SET movement_type = $2, created_at = NOW()
+                 SET movement_type = $1, created_at = NOW()
                  FROM original
                  WHERE pm.id = original.id
                  RETURNING pm.*
@@ -100,7 +113,7 @@ export class MovementsRepository {
                  FROM original
              )
              SELECT * FROM resolved`,
-            [movementId, movementType]
+            [movementType, ...movementIds]
         );
     }
 
@@ -172,6 +185,18 @@ export class MovementsRepository {
         return await executeQuery(
             `UPDATE purchases_movements SET paired_movement_id = $2 WHERE id = $1`,
             [movementId, pairedId]
+        );
+    }
+
+    async setPairedMovements(pairs) {
+        if (!pairs.length) return [];
+        const rows = pairs.map((_, i) => `($${i * 2 + 1}::integer, $${i * 2 + 2}::integer)`);
+        return await executeQuery(
+            `UPDATE purchases_movements pm
+             SET paired_movement_id = v.paired_id
+             FROM (VALUES ${rows.join(", ")}) AS v(id, paired_id)
+             WHERE pm.id = v.id`,
+            pairs.flat()
         );
     }
 

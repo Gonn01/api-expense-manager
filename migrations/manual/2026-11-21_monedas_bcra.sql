@@ -16,6 +16,7 @@ BEGIN
           AND t.typtype = 'e'
     LOOP
         FOREACH currency_code IN ARRAY ARRAY[
+            'BRL', 'CLP', 'UYU',
             'AUD', 'AWG', 'BOB', 'CAD', 'CHF', 'CNH', 'CNY', 'COP', 'CZK', 'DKK',
             'GBP', 'HKD', 'ILS', 'INR', 'JPY', 'MXN', 'NIO', 'NOK', 'NZD', 'PEN',
             'PYG', 'RSD', 'RUB', 'SEK', 'SGD', 'TRY', 'VES', 'VND', 'XDR', 'ZAR'

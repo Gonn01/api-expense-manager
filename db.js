@@ -44,21 +44,24 @@ export async function withTransaction(fn) {
         txStorage.run({ sql, afterCommit: pending }, fn),
     );
 
-    await Promise.allSettled(
-        pending.map(async (cb) => {
-            try {
-                await cb();
-            } catch (err) {
-                logRed(`[afterCommit] ${err.message}`);
-            }
-        }),
-    );
+    pending.forEach((cb) => runEffect(cb));
     return result;
+}
+
+async function runEffect(fn) {
+    try {
+        await fn();
+    } catch (err) {
+        logRed(`[afterCommit] ${err.message}`);
+    }
 }
 
 export function afterCommit(fn) {
     const store = txStorage.getStore();
-    if (!store) return fn();
+    if (!store) {
+        runEffect(fn);
+        return;
+    }
     store.afterCommit.push(fn);
 }
 

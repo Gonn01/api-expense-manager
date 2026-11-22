@@ -128,11 +128,7 @@ export class EntidadesFinancierasService {
       if (!entidad) throw customError(ErrorCode.ENTIDAD_NOT_FOUND);
 
       const ids = gastos.map((g) => g.id);
-      if (this.pagosCompartidosService) {
-        await Promise.all(
-          ids.map((gastoId) => this.pagosCompartidosService.cerrarCompartido(gastoId, userId)),
-        );
-      }
+      await this.pagosCompartidosService?.cerrarCompartidos(ids, userId);
 
       const [[deleted]] = await Promise.all([
         this.entidadesFinancierasRepository.delete(id, userId),

@@ -32,7 +32,7 @@ describe("EntidadesFinancierasService: eliminar y restaurar en cascada", () => {
             getOpenSession: vi.fn(async () => ({ id: 99 })),
             removeItems: vi.fn(async () => []),
         };
-        pagosCompartidosService = { cerrarCompartido: vi.fn(async () => null) };
+        pagosCompartidosService = { cerrarCompartidos: vi.fn(async () => []) };
         service = new EntidadesFinancierasService({
             entidadesFinancierasRepository,
             gastosRepository,
@@ -43,12 +43,12 @@ describe("EntidadesFinancierasService: eliminar y restaurar en cascada", () => {
         });
     });
 
-    it("elimina los gastos de la entidad, cierra los compartidos y los quita de la sesión", async () => {
+    it("elimina los gastos de la entidad, cierra los compartidos en lote y los quita de la sesión", async () => {
         const result = await service.eliminar(ENTIDAD, USER);
 
         expect(gastosRepository.deleteByEntidad).toHaveBeenCalledWith(ENTIDAD);
-        expect(pagosCompartidosService.cerrarCompartido).toHaveBeenCalledWith(10, USER);
-        expect(pagosCompartidosService.cerrarCompartido).toHaveBeenCalledWith(11, USER);
+        expect(pagosCompartidosService.cerrarCompartidos).toHaveBeenCalledTimes(1);
+        expect(pagosCompartidosService.cerrarCompartidos).toHaveBeenCalledWith([10, 11], USER);
         expect(gastosRepository.unlinkMany).toHaveBeenCalledWith([10, 11]);
         expect(movementsRepository.createGastoLogs).toHaveBeenCalledWith([
             { gastoId: 10, movementType: "DELETE" },

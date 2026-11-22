@@ -641,6 +641,8 @@ CREATE INDEX purchase_edit_requests_requested_by ON public.purchase_edit_request
 
 CREATE INDEX purchases_entity_status_idx ON public.purchases USING btree (financial_entity_id, status) WHERE (deleted = false);
 
+CREATE INDEX purchases_shared_from_idx ON public.purchases USING btree (shared_from_id) WHERE (shared_from_id IS NOT NULL);
+
 
 --
 -- Name: purchases_movements_purchase_type_idx; Type: INDEX; Schema: public; Owner: -
