@@ -234,9 +234,9 @@ describe("GastosService", () => {
         });
     });
 
-    describe.each(["REJECTED", "PENDING_APPROVAL"])("gasto compartido en estado %s", (status) => {
+    describe("gasto compartido rechazado", () => {
         beforeEach(() => {
-            gasto = makeGasto({ status });
+            gasto = makeGasto({ status: "REJECTED" });
         });
 
         it("no admite un pago directo", async () => {
@@ -275,6 +275,68 @@ describe("GastosService", () => {
             const errores = await service.errorDeMarcado([10], OWNER);
 
             expect(errores.get(10)).toBe("GASTO_NO_ACTIVO");
+        });
+
+        it("bloquea cambiar el monto", async () => {
+            await expect(service.update(10, OWNER, { amount: 500 })).rejects.toMatchObject({
+                code: "GASTO_CAMPO_NO_EDITABLE",
+                details: { field: "amount" },
+            });
+            expect(gastosRepository.update).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("gasto compartido que la otra persona todavía no aprobó", () => {
+        const COPIA_PENDIENTE = { sibling_id: 20, counterparty_user_id: INTRUSO, sibling_status: "PENDING_APPROVAL" };
+
+        beforeEach(() => {
+            gasto = makeGasto({ status: "PENDING_APPROVAL" });
+            gastosRepository.getSharedSibling.mockResolvedValue([COPIA_PENDIENTE]);
+            gastosRepository.getSharedSiblings.mockResolvedValue([{ purchase_id: 10, ...COPIA_PENDIENTE }]);
+        });
+
+        it("el pago directo busca también la copia pendiente y queda como pago pendiente", async () => {
+            await service.settleQuota(10, OWNER, { direct: true });
+
+            expect(gastosRepository.getSharedSibling).toHaveBeenCalledWith(10, { includePendingApproval: true });
+            expect(movementsRepository.createGastoLog).toHaveBeenCalledWith(
+                10, "PENDING_PAYMENT", expect.anything(), expect.any(Date), OWNER,
+            );
+            expect(movementsRepository.createGastoLog).not.toHaveBeenCalledWith(
+                10, "PAYMENT", expect.anything(), expect.anything(),
+            );
+        });
+
+        it("se marca en la sesión abierta", async () => {
+            settlementRepository.getOpenSession.mockResolvedValue({ id: 5 });
+
+            await service.settleQuota(10, OWNER);
+
+            expect(settlementRepository.upsertItem).toHaveBeenCalledWith(5, 10);
+        });
+
+        it("el pago en lote no lo deja afuera", async () => {
+            settlementRepository.getOpenSession.mockResolvedValue({ id: 5 });
+
+            const { failed } = await service.settleQuotasLote([10], OWNER);
+
+            expect(failed).toEqual([]);
+        });
+
+        it("el cierre de la sesión lo registra como pago pendiente", async () => {
+            const { kept } = await service.effectSettlementBatch([10], OWNER);
+
+            expect(kept).toEqual([10]);
+            expect(gastosRepository.getSharedSiblings).toHaveBeenCalledWith(["10"], { includePendingApproval: true });
+            expect(movementsRepository.createGastoLogs).toHaveBeenCalledWith([
+                expect.objectContaining({ gastoId: 10, movementType: "PENDING_PAYMENT", createdByUserId: OWNER }),
+            ]);
+        });
+
+        it("no informa error al intentar marcarlo", async () => {
+            const errores = await service.errorDeMarcado([10], OWNER);
+
+            expect(errores.has(10)).toBe(false);
         });
 
         it("bloquea cambiar el monto", async () => {
@@ -729,6 +791,18 @@ describe("GastosService", () => {
             expect(logsDelOriginal.filter((l) => l.movementType === "CREATION")).toEqual([
                 expect.objectContaining({ gastoId: 10 }),
             ]);
+        });
+
+        it("al compartir con cuotas ya pagas, las registra como pagos pendientes de confirmación", async () => {
+            entidadesFinancierasRepository.getById.mockResolvedValue([{ id: 7, user_id: OWNER, linked_user_id: INTRUSO }]);
+            gastosRepository.create = vi.fn(async (data) => [{ id: data.shared_from_id ? 11 : 10, ...data }]);
+
+            const [creado] = await crear({ payed_quotas: 2 });
+
+            const [logs] = movementsRepository.createGastoLogs.mock.calls[0];
+            expect(logs.map((l) => l.movementType)).toEqual(["CREATION", "PENDING_PAYMENT", "PENDING_PAYMENT"]);
+            expect(logs[1]).toMatchObject({ gastoId: 10, amount: 100, createdByUserId: OWNER });
+            expect(creado).toMatchObject({ payed_quotas: 0, pending_quotas: 2, last_payment_date: null });
         });
 
         it("devuelve las cuotas pagas reales del gasto creado", async () => {

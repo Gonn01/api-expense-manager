@@ -108,7 +108,6 @@ describe("CompartidosService.rechazar", () => {
     beforeEach(async () => {
         const { triggerCompartidos } = await import("../utils/pusher.js");
         triggerCompartidos.mockClear();
-        movementsRepository = { createGastoLogs: vi.fn() };
         gastosRepository = {
             getById: vi.fn(async () => [GASTO]),
             getCopyNotificationData: vi.fn(async () => [
@@ -116,12 +115,27 @@ describe("CompartidosService.rechazar", () => {
             ]),
             updateStatus: vi.fn(async (id, status) => [{ id, status }]),
         };
+        movementsRepository = {
+            createGastoLogs: vi.fn(),
+            getPendingPaymentsByPurchases: vi.fn(async () => []),
+            closePendingPayment: vi.fn(async (id, type) => [{ id, movement_type: type }]),
+        };
         service = new CompartidosService({
             gastosRepository,
             entidadesFinancierasRepository: {},
             movementsRepository,
             runInTransaction: (fn) => fn(),
         });
+    });
+
+    it("deja como rechazados los pagos pendientes que el emisor registró antes de la aprobación", async () => {
+        movementsRepository.getPendingPaymentsByPurchases.mockResolvedValue([{ id: 501 }, { id: 502 }]);
+
+        await service.rechazar(GASTO.id, RECEPTOR);
+
+        expect(movementsRepository.getPendingPaymentsByPurchases).toHaveBeenCalledWith([GASTO.shared_from_id]);
+        expect(movementsRepository.closePendingPayment).toHaveBeenCalledWith(501, "PAYMENT_REJECTED");
+        expect(movementsRepository.closePendingPayment).toHaveBeenCalledWith(502, "PAYMENT_REJECTED");
     });
 
     it("rechaza las dos copias y le avisa al emisor quién rechazó qué gasto", async () => {
