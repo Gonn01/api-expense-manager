@@ -9,6 +9,8 @@ const { executeQuery } = vi.hoisted(() => ({ executeQuery: vi.fn() }));
 vi.mock("../config/env.js", () => ({
     JWT_SECRET: "secreto-de-test",
     DATABASE_URL: "postgres://no-usar",
+    BEAMS_INSTANCE_ID: undefined,
+    BEAMS_SECRET_KEY: undefined,
 }));
 vi.mock("../db.js", () => ({
     executeQuery,
@@ -33,6 +35,8 @@ const { default: routesIndex } = await import("../routes/index.js");
 const PROTECTED_ROUTES = [
     ["put", "/user/preferred-currency"],
     ["put", "/user/sueldo"],
+    ["get", "/user/push-token"],
+    ["put", "/user/push-language"],
     ["get", "/entidades-financieras"],
     ["get", "/entidades-financieras/1"],
     ["post", "/entidades-financieras"],

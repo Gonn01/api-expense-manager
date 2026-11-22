@@ -1,5 +1,6 @@
 import { Currency } from "../utils/enums.js";
 import { handleError, badRequest } from "../utils/errors.js";
+import { PUSH_LANGUAGES } from "../utils/push-messages.js";
 
 export class UserController {
     constructor(userService) {
@@ -58,6 +59,31 @@ export class UserController {
                 message: "Sueldo actualizado",
                 data: updated,
             });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    };
+
+    getPushToken = (req, res) => {
+        try {
+            const token = this.userService.getPushToken(req.session.userId, req.query.user_id);
+            return res.json(token);
+        } catch (err) {
+            return handleError(res, err);
+        }
+    };
+
+    updatePushLanguage = async (req, res) => {
+        try {
+            const { language } = req.body;
+
+            if (!PUSH_LANGUAGES.includes(language)) {
+                return badRequest(res, `Debe enviar 'language' válido (${PUSH_LANGUAGES.join(', ')})`);
+            }
+
+            const updated = await this.userService.updatePushLanguage(req.session.userId, language);
+
+            return res.json({ data: updated });
         } catch (err) {
             return handleError(res, err);
         }

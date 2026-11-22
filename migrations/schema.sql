@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict ArL57PoOKyOvu7XZjcEmub3ao5AOPloNwArfKkfOFAiPTbvNj8jW6aHXkhhKA4t
+\restrict 9JknGKk8WNf6JeYShnbOl09MWhX1gRYdXc1QBA4XbnXfN2GDFwMAeDzq6dace0j
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 18.1
@@ -455,7 +455,9 @@ CREATE TABLE public.users (
     avatar text,
     preferred_currency public.currency,
     sueldo numeric,
-    sueldo_currency public.currency
+    sueldo_currency public.currency,
+    push_language character varying(2) DEFAULT 'es'::character varying NOT NULL,
+    CONSTRAINT users_push_language_check CHECK (((push_language)::text = ANY ((ARRAY['es'::character varying, 'en'::character varying])::text[])))
 );
 
 
@@ -859,5 +861,5 @@ ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict ArL57PoOKyOvu7XZjcEmub3ao5AOPloNwArfKkfOFAiPTbvNj8jW6aHXkhhKA4t
+\unrestrict 9JknGKk8WNf6JeYShnbOl09MWhX1gRYdXc1QBA4XbnXfN2GDFwMAeDzq6dace0j
 

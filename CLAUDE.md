@@ -74,7 +74,9 @@ There is no DI container/framework — factories instantiate everything by hand.
 
 **Error handling**: `utils/errors.js` defines `CustomError`, an `ErrorCode` catalog (single source of truth: code → HTTP status + default Spanish message), and `customError(code, overrides)`. Services throw these instead of `throw new Error(...)`; a single `errorMiddleware` registered last in `index.js` translates them into JSON responses. Add new domain errors to the `CATALOG` rather than hand-rolling ad hoc errors.
 
-**Config**: `config/env.js` loads `.env` via `dotenv` and exports `JWT_SECRET`/`DATABASE_URL` as named constants — other modules import these constants rather than reading `process.env` directly.
+**Config**: `config/env.js` loads `.env` via `dotenv` and exports `JWT_SECRET`/`DATABASE_URL`/`BEAMS_INSTANCE_ID`/`BEAMS_SECRET_KEY` as named constants — other modules import these constants rather than reading `process.env` directly.
+
+**Push**: `triggerCompartidos` (`utils/pusher.js`) also sends an Android push through Pusher Beams (`utils/push-notifications.js`) after COMMIT. A new Pusher event needs its text in `utils/push-messages.js`.
 
 **Migrations**: there is no schema-migration tool (no Prisma/Knex/node-pg-migrate); the Postgres schema is managed outside this repo. Schema changes are written as `migrations/manual/<date>_<reason>.sql` and run by hand against the database before deploying the code that needs them.
 

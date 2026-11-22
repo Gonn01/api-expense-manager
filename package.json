@@ -22,6 +22,7 @@
   },
   "type": "module",
   "dependencies": {
+    "@pusher/push-notifications-server": "^1.2.7",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "dayjs": "^1.11.19",

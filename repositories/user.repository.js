@@ -22,4 +22,21 @@ export class UserRepository {
             [userId, sueldo, sueldoCurrency ?? null]
         );
     }
+
+    async getPushLanguage(userId) {
+        return await executeQuery(
+            `SELECT push_language FROM users WHERE id = $1`,
+            [userId]
+        );
+    }
+
+    async updatePushLanguage(userId, language) {
+        return await executeQuery(
+            `UPDATE users
+             SET push_language = $2
+             WHERE id = $1
+             RETURNING push_language`,
+            [userId, language]
+        );
+    }
 }

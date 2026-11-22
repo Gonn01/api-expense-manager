@@ -18,6 +18,7 @@ La API persiste los datos en PostgreSQL y hace cumplir todas las reglas de negoc
 - **Node.js** 20 o superior (probado con Node 22) y **npm**.
 - Una base de datos **PostgreSQL** (local o hosteada) con el esquema de la aplicación.
 - Una app de **Pusher Channels** (opcional: sin ella la API funciona, pero no envía notificaciones en tiempo real).
+- Una instancia de **Pusher Beams** con FCM configurado (opcional: sin ella la API no envía notificaciones push a Android).
 
 ## Instalar dependencias
 
@@ -40,6 +41,9 @@ PUSHER_APP_ID=
 PUSHER_KEY=
 PUSHER_SECRET=
 PUSHER_CLUSTER=sa1
+
+BEAMS_INSTANCE_ID=
+BEAMS_SECRET_KEY=
 ```
 
 | Variable | Obligatoria | Para qué se usa |
@@ -48,6 +52,7 @@ PUSHER_CLUSTER=sa1
 | `JWT_SECRET` | Sí | Secreto con el que se firman y verifican los JWT de sesión. |
 | `PORT` | No | Puerto HTTP. Por defecto `3000`. |
 | `PUSHER_APP_ID`, `PUSHER_KEY`, `PUSHER_SECRET`, `PUSHER_CLUSTER` | No | Credenciales de Pusher Channels para publicar los eventos de gastos compartidos. |
+| `BEAMS_INSTANCE_ID`, `BEAMS_SECRET_KEY` | No | Credenciales de Pusher Beams para emitir tokens y enviar notificaciones push a Android. |
 
 ## Base de datos
 

@@ -60,6 +60,8 @@ const CATALOG = Object.freeze({
     NO_OPEN_SESSION: { status: HttpStatus.BAD_REQUEST, message: "No hay una sesión de cuentas abierta" },
     SETTLEMENT_EMPTY: { status: HttpStatus.CONFLICT, message: "Marcá al menos un gasto para terminar las cuentas, o descartá la sesión." },
     SNAPSHOT_NOT_FOUND: { status: HttpStatus.NOT_FOUND, message: "Snapshot no encontrado" },
+
+    PUSH_NO_CONFIGURADO: { status: HttpStatus.SERVICE_UNAVAILABLE, message: "Las notificaciones push no están configuradas." },
 });
 
 export const ErrorCode = Object.freeze(
