@@ -20,9 +20,13 @@ const publish = async (channel, event, data) => {
     }
 };
 
+export const userChannel = (userId) => `private-notificaciones-${userId}`;
+
+export const authorizePusherChannel = (socketId, channelName) => pusher.authorizeChannel(socketId, channelName);
+
 export const triggerCompartidos = (userId, event, data = {}) =>
     afterCommit(async () => {
-        const channel = `notificaciones-${userId}`;
+        const channel = userChannel(userId);
         const notificacion = await registrarNotificacion(userId, event, data);
         await Promise.all([
             publish(channel, event, data),

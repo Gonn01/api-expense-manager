@@ -22,14 +22,16 @@ let shared;
 beforeAll(startApi);
 afterAll(stopApi);
 
-beforeEach(async () => {
+async function seedSharedExpense() {
     await resetDatabase();
     ana = await createUser("Ana");
     beto = await createUser("Beto");
     carla = await createUser("Carla");
     shared = await createSharedExpense(ana, beto);
     sentEvents.length = 0;
-});
+}
+
+beforeEach(seedSharedExpense);
 
 async function payAsAna() {
     await ana.post(`/gastos/${shared.ownerExpense}/settle-quota`, { direct: true });
@@ -56,6 +58,64 @@ describe("aprobación", () => {
         const response = await beto.post(`/notificaciones/pendientes/${otro.copyId}/aprobar`, { new_entity_name: "X" });
 
         expect(response.status).toBe(403);
+    });
+
+    describe("con solicitudes simultáneas", () => {
+        const RONDAS = 8;
+
+        async function pendingCopy(name) {
+            const expense = await createExpense(ana, shared.ownerEntity, { name });
+            const [row] = await executeQuery("SELECT id FROM purchases WHERE shared_from_id = $1", [expense]);
+            return { expense, copy: Number(row.id) };
+        }
+
+        const countSharedLogs = async (purchaseId) =>
+            (await countMovements(purchaseId, "SHARED_APPROVED")) + (await countMovements(purchaseId, "SHARED_REJECTED"));
+
+        it("dos aprobaciones crean una sola entidad y un solo aviso", async () => {
+            for (let ronda = 0; ronda < RONDAS; ronda += 1) {
+                const { expense, copy } = await pendingCopy(`Doble ${ronda}`);
+                const entityName = `Nueva ${ronda}`;
+                sentEvents.length = 0;
+
+                const responses = await Promise.all([
+                    beto.post(`/notificaciones/pendientes/${copy}/aprobar`, { new_entity_name: entityName }),
+                    beto.post(`/notificaciones/pendientes/${copy}/aprobar`, { new_entity_name: entityName }),
+                ]);
+
+                const [entities] = await executeQuery(
+                    "SELECT count(*)::int AS total FROM financial_entities WHERE name = $1",
+                    [entityName],
+                );
+                expect(responses.map((r) => r.status).sort()).toEqual([200, 400]);
+                expect(entities.total).toBe(1);
+                expect(await countSharedLogs(copy)).toBe(1);
+                expect(await countSharedLogs(expense)).toBe(1);
+                expect(sentEvents.filter((e) => e.event === "compartido.aprobado")).toHaveLength(1);
+            }
+        });
+
+        it("aprobar y rechazar a la vez deja un único resultado en las dos copias", async () => {
+            for (let ronda = 0; ronda < RONDAS; ronda += 1) {
+                const { expense, copy } = await pendingCopy(`Cruce ${ronda}`);
+                sentEvents.length = 0;
+
+                const [aprobado, rechazado] = await Promise.all([
+                    beto.post(`/notificaciones/pendientes/${copy}/aprobar`, { new_entity_name: `Cruce ${ronda}` }),
+                    beto.post(`/notificaciones/pendientes/${copy}/rechazar`),
+                ]);
+
+                const rows = await executeQuery("SELECT status FROM purchases WHERE id IN ($1, $2)", [expense, copy]);
+                const esperado = aprobado.status === 200 ? "ACTIVE" : "REJECTED";
+                expect([aprobado.status, rechazado.status].sort()).toEqual([200, 400]);
+                expect(rows.map((r) => r.status)).toEqual([esperado, esperado]);
+                expect(await countSharedLogs(copy)).toBe(1);
+                expect(await countSharedLogs(expense)).toBe(1);
+                expect(
+                    sentEvents.filter((e) => ["compartido.aprobado", "compartido.rechazado"].includes(e.event)),
+                ).toHaveLength(1);
+            }
+        });
     });
 });
 
@@ -206,6 +266,71 @@ describe("reversión", () => {
         const current = await latestMovement(shared.ownerExpense, "PAYMENT");
         expect(current.reversal_requested_by_user_id).toBeNull();
         expect(await paidQuotas(ana, shared.ownerExpense)).toBe(1);
+    });
+
+    describe("con respuestas simultáneas", () => {
+        const RONDAS = 8;
+
+        const countReversalOutcomes = async (purchaseId) =>
+            (await countMovements(purchaseId, "REFUND")) +
+            (await countMovements(purchaseId, "REVERSAL_CANCELLED")) +
+            (await countMovements(purchaseId, "REVERSAL_REJECTED"));
+
+        async function expectSingleOutcome(payment, aceptada, otra) {
+            expect([aceptada.status, otra.status].filter((status) => status === 200)).toHaveLength(1);
+            const [row] = await executeQuery(
+                "SELECT movement_type, reversal_requested_by_user_id FROM purchases_movements WHERE id = $1",
+                [payment.id],
+            );
+            expect(row.movement_type).toBe(aceptada.status === 200 ? "PAYMENT_REVERTED" : "PAYMENT");
+            expect(row.reversal_requested_by_user_id).toBeNull();
+            expect(await paidQuotas(ana, shared.ownerExpense)).toBe(aceptada.status === 200 ? 0 : 1);
+            expect(await countReversalOutcomes(shared.ownerExpense)).toBe(1);
+        }
+
+        async function freshReversal() {
+            await seedSharedExpense();
+            return (await requestReversal()).payment;
+        }
+
+        it("aceptar y cancelar a la vez no revierte una solicitud cancelada", async () => {
+            for (let ronda = 0; ronda < RONDAS; ronda += 1) {
+                const payment = await freshReversal();
+
+                const [aceptada, cancelada] = await Promise.all([
+                    beto.post(`/notificaciones/pendientes/pagos/${payment.id}/reversion/aceptar`),
+                    ana.post(`/notificaciones/pendientes/pagos/${payment.id}/reversion/cancelar`),
+                ]);
+
+                await expectSingleOutcome(payment, aceptada, cancelada);
+            }
+        });
+
+        it("aceptar y rechazar a la vez deja un solo resultado", async () => {
+            for (let ronda = 0; ronda < RONDAS; ronda += 1) {
+                const payment = await freshReversal();
+
+                const [aceptada, rechazada] = await Promise.all([
+                    beto.post(`/notificaciones/pendientes/pagos/${payment.id}/reversion/aceptar`),
+                    beto.post(`/notificaciones/pendientes/pagos/${payment.id}/reversion/rechazar`),
+                ]);
+
+                await expectSingleOutcome(payment, aceptada, rechazada);
+            }
+        });
+
+        it("dos solicitudes simultáneas registran una sola", async () => {
+            await confirmedPayment();
+            const payment = await latestMovement(shared.ownerExpense, "PAYMENT");
+
+            const responses = await Promise.all([
+                ana.post(`/gastos/${shared.ownerExpense}/pagos/${payment.id}/revertir`),
+                beto.post(`/gastos/${shared.copyId}/pagos/${payment.paired_movement_id}/revertir`),
+            ]);
+
+            expect(responses.filter((r) => r.status === 200)).toHaveLength(1);
+            expect(await countMovements(shared.ownerExpense, "REVERSAL_REQUESTED")).toBe(1);
+        });
     });
 });
 

@@ -391,6 +391,15 @@ export class GastosRepository {
     );
   }
 
+  async updateStatusIfPendingApproval(id, status) {
+    return await executeQuery(
+      `UPDATE purchases SET status = $2
+       WHERE id = $1 AND deleted = false AND status = 'PENDING_APPROVAL'
+       RETURNING *`,
+      [id, status]
+    );
+  }
+
   async setPostponed(id, value) {
     return await executeQuery(
       `UPDATE purchases p
@@ -445,7 +454,7 @@ export class GastosRepository {
     return await executeQuery(
       `UPDATE purchases
        SET status = 'ACTIVE', financial_entity_id = $2
-       WHERE id = $1 AND deleted = false
+       WHERE id = $1 AND deleted = false AND status = 'PENDING_APPROVAL'
        RETURNING *, ${CALCULATED_FIELDS.replace(/p\./g, '')}`,
       [id, financialEntityId]
     );

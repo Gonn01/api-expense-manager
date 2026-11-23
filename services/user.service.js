@@ -1,12 +1,15 @@
 import bcrypt from "bcrypt";
 import { customError, ErrorCode } from "../utils/errors.js";
 import { generatePushToken, isPushConfigured } from "../utils/push-notifications.js";
+import { authorizePusherChannel, userChannel } from "../utils/pusher.js";
 
 export class UserService {
     constructor({
-        userRepository
+        userRepository,
+        authorizeChannel = authorizePusherChannel,
     }) {
         this.userRepository = userRepository;
+        this.authorizeChannel = authorizeChannel;
     }
 
     async updatePreferredCurrency(userId, preferredCurrency) {
@@ -70,6 +73,13 @@ export class UserService {
             throw customError(ErrorCode.PUSH_NO_CONFIGURADO);
         }
         return generatePushToken(userId);
+    }
+
+    authorizeRealtimeChannel(userId, socketId, channelName) {
+        if (channelName !== userChannel(userId)) {
+            throw customError(ErrorCode.NO_AUTORIZADO);
+        }
+        return this.authorizeChannel(socketId, channelName);
     }
 
     async updatePushLanguage(userId, language) {

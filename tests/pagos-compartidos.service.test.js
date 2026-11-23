@@ -74,7 +74,7 @@ describe("PagosCompartidosService", () => {
             setReversalRequest: vi.fn(async (ids) => ids.map((id) => ({ id }))),
             clearReversalRequest: vi.fn(async (ids) => ids.map((id) => ({ id }))),
             logPaymentEvent: vi.fn(async () => []),
-            revertPaymentsByIds: vi.fn(async (ids) =>
+            revertRequestedPayments: vi.fn(async (ids) =>
                 ids.map((id) => ({ id, purchase_id: id === 50 ? 20 : 30, amount: 100 })),
             ),
         };
@@ -321,7 +321,7 @@ describe("PagosCompartidosService", () => {
             it("la otra persona la acepta: los dos pagos quedan revertidos y el reembolso en ambos gastos", async () => {
                 await service.aceptarReversion(50, RECEPTOR);
 
-                expect(movementsRepository.revertPaymentsByIds).toHaveBeenCalledWith([50, 60]);
+                expect(movementsRepository.revertRequestedPayments).toHaveBeenCalledWith([50, 60]);
                 expect(movementsRepository.createGastoLog).toHaveBeenCalledWith(20, "REFUND", 100, expect.any(Date), null, expect.any(String));
                 expect(movementsRepository.createGastoLog).toHaveBeenCalledWith(30, "REFUND", 100, expect.any(Date), null, expect.any(String));
                 expect(triggerCompartidos).toHaveBeenCalledWith(EMISOR, PusherEvent.PAGO_REVERSION_ACEPTADA, expect.any(Object));
@@ -332,7 +332,7 @@ describe("PagosCompartidosService", () => {
 
                 expect(movementsRepository.clearReversalRequest).toHaveBeenCalledWith([50, 60]);
                 expect(movementsRepository.logPaymentEvent).toHaveBeenCalledWith([50, 60], "REVERSAL_REJECTED", RECEPTOR);
-                expect(movementsRepository.revertPaymentsByIds).not.toHaveBeenCalled();
+                expect(movementsRepository.revertRequestedPayments).not.toHaveBeenCalled();
                 expect(triggerCompartidos).toHaveBeenCalledWith(EMISOR, PusherEvent.PAGO_REVERSION_RECHAZADA, expect.any(Object));
             });
 
@@ -344,6 +344,29 @@ describe("PagosCompartidosService", () => {
                 expect(movementsRepository.clearReversalRequest).toHaveBeenCalledWith([50, 60]);
                 expect(movementsRepository.logPaymentEvent).toHaveBeenCalledWith([50, 60], "REVERSAL_CANCELLED", EMISOR);
                 expect(triggerCompartidos).toHaveBeenCalledWith(RECEPTOR, PusherEvent.PAGO_REVERSION_CANCELADA, expect.any(Object));
+            });
+
+            it("no acepta una solicitud que se canceló mientras esperaba el bloqueo", async () => {
+                movementsRepository.getPaymentById
+                    .mockResolvedValueOnce([
+                        { id: 50, purchase_id: 20, movement_type: "PAYMENT", paired_movement_id: 60, reversal_requested_by_user_id: EMISOR },
+                    ])
+                    .mockResolvedValueOnce([
+                        { id: 50, purchase_id: 20, movement_type: "PAYMENT", paired_movement_id: 60, reversal_requested_by_user_id: null },
+                    ]);
+
+                await expect(service.aceptarReversion(50, RECEPTOR)).rejects.toMatchObject({ code: "REVERSION_NOT_FOUND" });
+
+                expect(movementsRepository.revertRequestedPayments).not.toHaveBeenCalled();
+            });
+
+            it("no deja historial si la solicitud ya estaba cerrada al escribir", async () => {
+                movementsRepository.clearReversalRequest.mockResolvedValue([]);
+
+                await expect(service.rechazarReversion(50, RECEPTOR)).rejects.toMatchObject({ code: "REVERSION_NOT_FOUND" });
+
+                expect(movementsRepository.logPaymentEvent).not.toHaveBeenCalled();
+                expect(triggerCompartidos).not.toHaveBeenCalled();
             });
 
             it("la otra persona no puede cancelarla", async () => {

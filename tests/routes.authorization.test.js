@@ -21,6 +21,8 @@ vi.mock("../db.js", () => ({
 vi.mock("../utils/pusher.js", () => ({
     pusher: { trigger: vi.fn() },
     triggerCompartidos: vi.fn(),
+    userChannel: (userId) => `private-notificaciones-${userId}`,
+    authorizePusherChannel: vi.fn(),
 }));
 vi.mock("../utils/logs_custom.js", () => ({
     logBlue: vi.fn(),
@@ -39,6 +41,7 @@ const PROTECTED_ROUTES = [
     ["put", "/user/password"],
     ["get", "/user/push-token"],
     ["put", "/user/push-language"],
+    ["post", "/user/realtime-auth"],
     ["get", "/entidades-financieras"],
     ["get", "/entidades-financieras/1"],
     ["post", "/entidades-financieras"],

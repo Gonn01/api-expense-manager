@@ -20,6 +20,7 @@ describe("CompartidosService.aprobar: vínculo con el emisor", () => {
     beforeEach(() => {
         gastosRepository = {
             getById: vi.fn(async () => [GASTO]),
+            lockPurchases: vi.fn(),
             getEntityOwnerByPurchaseId: vi.fn(async () => [{ user_id: EMISOR }]),
             aprobarGasto: vi.fn(async () => [{ ...GASTO, financial_entity_id: 7 }]),
             getCopyNotificationData: vi.fn(async () => []),
@@ -110,10 +111,12 @@ describe("CompartidosService.rechazar", () => {
         triggerCompartidos.mockClear();
         gastosRepository = {
             getById: vi.fn(async () => [GASTO]),
+            lockPurchases: vi.fn(),
             getCopyNotificationData: vi.fn(async () => [
                 { sender_user_id: EMISOR, sender_entity_id: 5, receiver_name: "Ana", gasto_name: "Cena" },
             ]),
             updateStatus: vi.fn(async (id, status) => [{ id, status }]),
+            updateStatusIfPendingApproval: vi.fn(async (id, status) => [{ id, status }]),
         };
         movementsRepository = {
             createGastoLogs: vi.fn(),
@@ -155,6 +158,30 @@ describe("CompartidosService.rechazar", () => {
             receiverName: "Ana",
             gastoName: "Cena",
         });
+    });
+
+    it("bloquea las dos copias y valida el estado después del bloqueo", async () => {
+        gastosRepository.getById
+            .mockResolvedValueOnce([GASTO])
+            .mockResolvedValueOnce([{ ...GASTO, status: "ACTIVE" }]);
+
+        await expect(service.rechazar(GASTO.id, RECEPTOR)).rejects.toMatchObject({
+            code: "GASTO_NO_PENDIENTE_APROBACION",
+        });
+
+        expect(gastosRepository.lockPurchases).toHaveBeenCalledWith([GASTO.id, GASTO.shared_from_id]);
+        expect(gastosRepository.updateStatusIfPendingApproval).not.toHaveBeenCalled();
+    });
+
+    it("no registra nada si la escritura condicional no encuentra el gasto pendiente", async () => {
+        gastosRepository.updateStatusIfPendingApproval.mockResolvedValue([]);
+
+        await expect(service.rechazar(GASTO.id, RECEPTOR)).rejects.toMatchObject({
+            code: "GASTO_NO_PENDIENTE_APROBACION",
+        });
+
+        expect(gastosRepository.updateStatus).not.toHaveBeenCalled();
+        expect(movementsRepository.createGastoLogs).not.toHaveBeenCalled();
     });
 
     it("no notifica si el gasto original ya no existe", async () => {

@@ -114,14 +114,22 @@ export class CompartidosService {
         }
     }
 
+    async #copiaPendienteBloqueada(gastoId, userId) {
+        const [inicial] = await this.gastosRepository.getById(gastoId);
+        if (!inicial) throw customError(ErrorCode.GASTO_NOT_FOUND);
+        if (String(inicial.receiver_user_id) !== String(userId)) throw customError(ErrorCode.NO_AUTORIZADO);
+
+        await this.gastosRepository.lockPurchases([gastoId, inicial.shared_from_id]);
+
+        const [gasto] = await this.gastosRepository.getById(gastoId);
+        if (!gasto) throw customError(ErrorCode.GASTO_NOT_FOUND);
+        if (gasto.status !== ExpenseStatus.PENDING_APPROVAL) throw customError(ErrorCode.GASTO_NO_PENDIENTE_APROBACION);
+        return gasto;
+    }
+
     async aprobar(gastoId, userId, financialEntityId, newEntityName) {
         return this.tx(async () => {
-            const rows = await this.gastosRepository.getById(gastoId);
-            if (!rows.length) throw customError(ErrorCode.GASTO_NOT_FOUND);
-
-            const gasto = rows[0];
-            if (String(gasto.receiver_user_id) !== String(userId)) throw customError(ErrorCode.NO_AUTORIZADO);
-            if (gasto.status !== ExpenseStatus.PENDING_APPROVAL) throw customError(ErrorCode.GASTO_NO_PENDIENTE_APROBACION);
+            const gasto = await this.#copiaPendienteBloqueada(gastoId, userId);
 
             let entityId = financialEntityId ?? null;
             const [sender] = await this.gastosRepository.getEntityOwnerByPurchaseId(gasto.shared_from_id);
@@ -149,6 +157,8 @@ export class CompartidosService {
                 this.gastosRepository.aprobarGasto(gastoId, entityId),
                 this.gastosRepository.getCopyNotificationData(gastoId),
             ]);
+
+            if (!updated) throw customError(ErrorCode.GASTO_NO_PENDIENTE_APROBACION);
 
             const notif = notifRows[0];
 
@@ -188,17 +198,17 @@ export class CompartidosService {
 
     async rechazar(gastoId, userId) {
         return this.tx(async () => {
-            const rows = await this.gastosRepository.getById(gastoId);
-            if (!rows.length) throw customError(ErrorCode.GASTO_NOT_FOUND);
-
-            const gasto = rows[0];
-            if (String(gasto.receiver_user_id) !== String(userId)) throw customError(ErrorCode.NO_AUTORIZADO);
-            if (gasto.status !== ExpenseStatus.PENDING_APPROVAL) throw customError(ErrorCode.GASTO_NO_PENDIENTE_APROBACION);
+            const gasto = await this.#copiaPendienteBloqueada(gastoId, userId);
 
             const [notif] = await this.gastosRepository.getCopyNotificationData(gastoId);
 
-            const [[updated]] = await Promise.all([
-                this.gastosRepository.updateStatus(gastoId, ExpenseStatus.REJECTED),
+            const [updated] = await this.gastosRepository.updateStatusIfPendingApproval(
+                gastoId,
+                ExpenseStatus.REJECTED,
+            );
+            if (!updated) throw customError(ErrorCode.GASTO_NO_PENDIENTE_APROBACION);
+
+            await Promise.all([
                 this.gastosRepository.updateStatus(gasto.shared_from_id, ExpenseStatus.REJECTED),
                 this.#rechazarPagosPendientes(gasto.shared_from_id),
                 this.#logEstadoCompartido([gastoId, gasto.shared_from_id], MovementType.SHARED_REJECTED, userId),

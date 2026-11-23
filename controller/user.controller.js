@@ -3,6 +3,7 @@ import { handleError, badRequest } from "../utils/errors.js";
 import { PUSH_LANGUAGES } from "../utils/push-messages.js";
 
 const MIN_PASSWORD_LENGTH = 6;
+const PUSHER_SOCKET_ID = /^\d+\.\d+$/;
 
 export class UserController {
     constructor(userService) {
@@ -97,6 +98,29 @@ export class UserController {
         try {
             const token = this.userService.getPushToken(req.session.userId, req.query.user_id);
             return res.json(token);
+        } catch (err) {
+            return handleError(res, err);
+        }
+    };
+
+    authorizeRealtimeChannel = (req, res) => {
+        try {
+            const { socket_id: socketId, channel_name: channelName } = req.body ?? {};
+
+            if (typeof socketId !== "string" || !PUSHER_SOCKET_ID.test(socketId)) {
+                return badRequest(res, "Debe enviar 'socket_id' válido");
+            }
+            if (typeof channelName !== "string" || !channelName) {
+                return badRequest(res, "Debe enviar 'channel_name'");
+            }
+
+            const authorization = this.userService.authorizeRealtimeChannel(
+                req.session.userId,
+                socketId,
+                channelName,
+            );
+
+            return res.json({ data: authorization });
         } catch (err) {
             return handleError(res, err);
         }

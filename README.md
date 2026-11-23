@@ -96,7 +96,7 @@ Los tests de `npm test` son unitarios y no necesitan una base: los de controller
 ```
 Cliente ──HTTP/JSON + JWT──► Express (/api) ──SQL──► PostgreSQL
    ▲                              │
-   │                              └──► Pusher Channels (canal notificaciones-<userId>)
+   │                              └──► Pusher Channels (canal private-notificaciones-<userId>)
    └──────── eventos en tiempo real ◄──┘
 ```
 

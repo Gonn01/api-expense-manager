@@ -11,6 +11,10 @@ export const settleNotifications = async () => {
 
 export const pusher = { trigger: async () => {} };
 
+export const userChannel = (userId) => `private-notificaciones-${userId}`;
+
+export const authorizePusherChannel = (socketId, channelName) => ({ auth: `fake:${socketId}:${channelName}` });
+
 export const triggerCompartidos = (userId, event, data = {}) =>
     afterCommit(async () => {
         sentEvents.push({ userId: Number(userId), event, data });

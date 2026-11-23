@@ -84,6 +84,8 @@ There is no DI container/framework — factories instantiate everything by hand.
 
 **Notifications**: `triggerCompartidos` (`utils/pusher.js`) also stores every `PusherEvent` for its recipient in `notifications` after COMMIT, except the actor's own action (`utils/notifications.js`).
 
+**Realtime channels**: each user has a private channel, `private-notificaciones-<userId>` (`userChannel` in `utils/pusher.js`). `POST /user/realtime-auth` signs only the channel of the session user.
+
 **Push**: `triggerCompartidos` (`utils/pusher.js`) also sends an Android push through Pusher Beams (`utils/push-notifications.js`) after COMMIT. A new Pusher event needs its text in `utils/push-messages.js`.
 
 **Migrations**: there is no schema-migration tool (no Prisma/Knex/node-pg-migrate); the Postgres schema is managed outside this repo. Schema changes are written as `migrations/manual/<date>_<reason>.sql` and run by hand against the database before deploying the code that needs them.

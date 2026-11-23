@@ -241,7 +241,9 @@ export class MovementsRepository {
         return await executeQuery(
             `UPDATE purchases_movements
              SET reversal_requested_by_user_id = $1, reversal_requested_at = NOW()
-             WHERE id IN (${placeholders}) AND movement_type = 'PAYMENT'
+             WHERE id IN (${placeholders})
+               AND movement_type = 'PAYMENT'
+               AND reversal_requested_by_user_id IS NULL
              RETURNING *`,
             [userId, ...ids]
         );
@@ -255,6 +257,25 @@ export class MovementsRepository {
             `UPDATE purchases_movements
              SET reversal_requested_by_user_id = NULL, reversal_requested_at = NULL
              WHERE id IN (${placeholders})
+               AND movement_type = 'PAYMENT'
+               AND reversal_requested_by_user_id IS NOT NULL
+             RETURNING *`,
+            ids
+        );
+    }
+
+    async revertRequestedPayments(movementIds) {
+        const ids = movementIds.filter((id) => id != null);
+        if (!ids.length) return [];
+        const placeholders = ids.map((_, i) => `$${i + 1}`).join(", ");
+        return await executeQuery(
+            `UPDATE purchases_movements
+             SET movement_type = 'PAYMENT_REVERTED',
+                 reversal_requested_by_user_id = NULL,
+                 reversal_requested_at = NULL
+             WHERE id IN (${placeholders})
+               AND movement_type = 'PAYMENT'
+               AND reversal_requested_by_user_id IS NOT NULL
              RETURNING *`,
             ids
         );

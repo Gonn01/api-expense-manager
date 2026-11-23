@@ -347,25 +347,42 @@ export class PagosCompartidosService {
         return { pago, sibling, otherUserId };
     }
 
+    async #pagoBloqueado(movementId, userId) {
+        const partes = await this.#getPagoConPartes(movementId, userId);
+        await this.gastosRepository.lockPurchases([partes.pago.purchase_id, partes.sibling.sibling_id]);
+
+        const [pago] = await this.movementsRepository.getPaymentById(partes.pago.id);
+        if (!pago || pago.movement_type !== MovementType.PAYMENT) {
+            throw customError(ErrorCode.PAGO_NOT_FOUND);
+        }
+        return { ...partes, pago };
+    }
+
+    async #cerrarSolicitudReversion(pago, movementType, userId) {
+        const ids = this.#idsDelPar(pago);
+        const rows = await this.movementsRepository.clearReversalRequest(ids);
+        if (!rows.length) throw customError(ErrorCode.REVERSION_NOT_FOUND);
+
+        await this.movementsRepository.logPaymentEvent(ids, movementType, userId);
+        return rows.find((r) => String(r.id) === String(pago.id)) ?? rows[0];
+    }
+
     #idsDelPar(pago) {
         return [pago.id, pago.paired_movement_id].filter((id) => id != null);
     }
 
     async solicitarReversion(movementId, userId) {
         return this.tx(async () => {
-            const { pago, sibling, otherUserId } = await this.#getPagoConPartes(movementId, userId);
-            await this.gastosRepository.lockPurchases([pago.purchase_id, sibling.sibling_id]);
-
-            const [actual] = await this.movementsRepository.getPaymentById(pago.id);
-            if (actual?.reversal_requested_by_user_id != null) {
+            const { pago, otherUserId } = await this.#pagoBloqueado(movementId, userId);
+            if (pago.reversal_requested_by_user_id != null) {
                 throw customError(ErrorCode.REVERSION_YA_SOLICITADA);
             }
 
             const ids = this.#idsDelPar(pago);
-            const [rows] = await Promise.all([
-                this.movementsRepository.setReversalRequest(ids, userId),
-                this.movementsRepository.logPaymentEvent(ids, MovementType.REVERSAL_REQUESTED, userId),
-            ]);
+            const rows = await this.movementsRepository.setReversalRequest(ids, userId);
+            if (!rows.length) throw customError(ErrorCode.REVERSION_YA_SOLICITADA);
+
+            await this.movementsRepository.logPaymentEvent(ids, MovementType.REVERSAL_REQUESTED, userId);
             await this.#notificar(otherUserId, PusherEvent.PAGO_REVERSION_SOLICITADA, pago.purchase_id, userId);
             return rows.find((r) => String(r.id) === String(pago.id)) ?? rows[0];
         });
@@ -373,30 +390,25 @@ export class PagosCompartidosService {
 
     async cancelarReversion(movementId, userId) {
         return this.tx(async () => {
-            const { pago, otherUserId } = await this.#getPagoConPartes(movementId, userId);
+            const { pago, otherUserId } = await this.#pagoBloqueado(movementId, userId);
             if (pago.reversal_requested_by_user_id == null) throw customError(ErrorCode.REVERSION_NOT_FOUND);
             if (String(pago.reversal_requested_by_user_id) !== String(userId)) {
                 throw customError(ErrorCode.NO_AUTORIZADO);
             }
 
-            const ids = this.#idsDelPar(pago);
-            const [rows] = await Promise.all([
-                this.movementsRepository.clearReversalRequest(ids),
-                this.movementsRepository.logPaymentEvent(ids, MovementType.REVERSAL_CANCELLED, userId),
-            ]);
+            const cerrado = await this.#cerrarSolicitudReversion(pago, MovementType.REVERSAL_CANCELLED, userId);
             await this.#notificar(otherUserId, PusherEvent.PAGO_REVERSION_CANCELADA, pago.purchase_id, userId);
-            return rows[0];
+            return cerrado;
         });
     }
 
     async aceptarReversion(movementId, userId) {
         return this.tx(async () => {
-            const { pago, sibling } = await this.#getPagoConPartes(movementId, userId);
+            const { pago } = await this.#pagoBloqueado(movementId, userId);
             this.#assertPuedeResponder(pago, userId);
-            await this.gastosRepository.lockPurchases([pago.purchase_id, sibling.sibling_id]);
 
-            const reverted = await this.movementsRepository.revertPaymentsByIds(this.#idsDelPar(pago));
-            if (!reverted.length) throw customError(ErrorCode.PAGO_NOT_FOUND);
+            const reverted = await this.movementsRepository.revertRequestedPayments(this.#idsDelPar(pago));
+            if (!reverted.length) throw customError(ErrorCode.REVERSION_NOT_FOUND);
 
             const fecha = new Date();
             for (const row of reverted) {
@@ -422,21 +434,17 @@ export class PagosCompartidosService {
 
     async rechazarReversion(movementId, userId) {
         return this.tx(async () => {
-            const { pago } = await this.#getPagoConPartes(movementId, userId);
+            const { pago } = await this.#pagoBloqueado(movementId, userId);
             this.#assertPuedeResponder(pago, userId);
 
-            const ids = this.#idsDelPar(pago);
-            const [rows] = await Promise.all([
-                this.movementsRepository.clearReversalRequest(ids),
-                this.movementsRepository.logPaymentEvent(ids, MovementType.REVERSAL_REJECTED, userId),
-            ]);
+            const cerrado = await this.#cerrarSolicitudReversion(pago, MovementType.REVERSAL_REJECTED, userId);
             await this.#notificar(
                 pago.reversal_requested_by_user_id,
                 PusherEvent.PAGO_REVERSION_RECHAZADA,
                 pago.purchase_id,
                 userId,
             );
-            return rows[0];
+            return cerrado;
         });
     }
 

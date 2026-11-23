@@ -11,5 +11,6 @@ router.get("/password-status", userController.getPasswordStatus);
 router.put("/password", userController.updatePassword);
 router.get("/push-token", userController.getPushToken);
 router.put("/push-language", userController.updatePushLanguage);
+router.post("/realtime-auth", userController.authorizeRealtimeChannel);
 
 export default router;
