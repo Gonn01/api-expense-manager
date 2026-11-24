@@ -1,11 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import postgres from "postgres";
-import { DATABASE_URL } from "./config/env.js";
+import { DATABASE_SSL, DATABASE_URL } from "./config/env.js";
 import { logRed, logYellow } from "./utils/logs_custom.js";
 
 const connectionString = DATABASE_URL;
 const connection = postgres(connectionString, {
-    ssl: "require",
+    ssl: DATABASE_SSL === "disable" ? false : "require",
     idle_timeout: 60 * 5,
     max_lifetime: 60 * 30,
     prepare: false,

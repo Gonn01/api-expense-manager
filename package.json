@@ -18,7 +18,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:integration": "vitest run --config vitest.integration.config.js"
+    "test:integration": "vitest run --config vitest.integration.config.js",
+    "start:local": "node scripts/local-stack.js",
+    "evidence:load": "node scripts/evidence/load-test.js",
+    "evidence:resilience": "node scripts/evidence/resilience-test.js"
   },
   "type": "module",
   "dependencies": {
@@ -37,6 +40,7 @@
   "devDependencies": {
     "@faker-js/faker": "^9.9.0",
     "@vitest/coverage-v8": "^5.1.0",
+    "autocannon": "^8.0.0",
     "eslint": "^9.28.0",
     "vitest": "^5.1.0"
   }

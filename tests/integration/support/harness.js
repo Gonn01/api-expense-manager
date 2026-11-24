@@ -7,6 +7,7 @@ import { sentEvents, settleNotifications } from "./fake-pusher.js";
 import { assertLocalDatabase } from "./postgres-local.js";
 
 const TABLES = [
+    "auth_rate_limits",
     "notifications",
     "purchase_edit_requests",
     "settlement_session_items",
@@ -53,7 +54,7 @@ export async function createUser(name) {
         [name, email],
     );
     const id = Number(row.id);
-    const token = jwt.sign({ userId: id }, process.env.JWT_SECRET);
+    const token = jwt.sign({ userId: id, tokenVersion: 0 }, process.env.JWT_SECRET);
 
     async function call(method, path, body) {
         const response = await fetch(`${baseUrl}${path}`, {
@@ -74,6 +75,13 @@ export async function createUser(name) {
         delete: (path, body) => call("DELETE", path, body),
     };
 }
+
+export const requestWithToken = (method, path, token, body) =>
+    fetch(`${baseUrl}${path}`, {
+        method,
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: body === undefined ? undefined : JSON.stringify(body),
+    });
 
 export async function createEntity(user, name = "Banco") {
     const response = await user.post("/entidades-financieras", { name });

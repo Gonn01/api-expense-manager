@@ -9,6 +9,7 @@ const { executeQuery } = vi.hoisted(() => ({ executeQuery: vi.fn() }));
 vi.mock("../config/env.js", () => ({
     JWT_SECRET: "secreto-de-test",
     DATABASE_URL: "postgres://no-usar",
+    DATABASE_SSL: undefined,
     BEAMS_INSTANCE_ID: undefined,
     BEAMS_SECRET_KEY: undefined,
 }));
@@ -39,6 +40,7 @@ const PROTECTED_ROUTES = [
     ["put", "/user/sueldo"],
     ["get", "/user/password-status"],
     ["put", "/user/password"],
+    ["post", "/user/sessions/revoke"],
     ["get", "/user/push-token"],
     ["put", "/user/push-language"],
     ["post", "/user/realtime-auth"],
@@ -122,9 +124,14 @@ afterAll(async () => {
     await new Promise((resolve) => server.close(resolve));
 });
 
+const isTokenVersionQuery = (query) => /SELECT token_version FROM users/.test(query);
+const withValidSession = (respond) => async (query, params) =>
+    isTokenVersionQuery(query) ? [{ token_version: 0 }] : respond(query, params);
+const businessCalls = () => executeQuery.mock.calls.filter(([query]) => !isTokenVersionQuery(query));
+
 beforeEach(() => {
     executeQuery.mockReset();
-    executeQuery.mockResolvedValue([]);
+    executeQuery.mockImplementation(withValidSession(async () => []));
 });
 
 describe("rutas protegidas", () => {
@@ -155,7 +162,7 @@ describe("rutas protegidas", () => {
 });
 
 describe("identidad del usuario", () => {
-    const token = () => jwt.sign({ userId: 42 }, TEST_SECRET);
+    const token = () => jwt.sign({ userId: 42, tokenVersion: 0 }, TEST_SECRET);
 
     it("busca la entidad con el usuario del token", async () => {
         const response = await request("get", "/entidades-financieras/5", { token: token() });
@@ -163,12 +170,12 @@ describe("identidad del usuario", () => {
 
         expect(response.status).toBe(404);
         expect(body.code).toBe("ENTIDAD_NOT_FOUND");
-        expect(executeQuery.mock.calls[0][1]).toEqual(["5", 42]);
+        expect(businessCalls()[0][1]).toEqual(["5", 42]);
     });
 
     it("ignora un userId enviado en el body", async () => {
-        executeQuery.mockImplementation(async (query) =>
-            /INSERT/i.test(query) ? [{ id: 1, name: "Banco" }] : [],
+        executeQuery.mockImplementation(
+            withValidSession(async (query) => (/INSERT/i.test(query) ? [{ id: 1, name: "Banco" }] : [])),
         );
 
         const response = await request("post", "/entidades-financieras", {
@@ -176,7 +183,7 @@ describe("identidad del usuario", () => {
             body: { name: "Banco", userId: 99, user_id: 99 },
         });
 
-        const values = executeQuery.mock.calls.flatMap(([, params]) => params ?? []);
+        const values = businessCalls().flatMap(([, params]) => params ?? []);
         expect(response.status).toBe(201);
         expect(values).toContain(42);
         expect(values).not.toContain(99);

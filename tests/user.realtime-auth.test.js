@@ -4,6 +4,18 @@ import { UserController } from "../controller/user.controller.js";
 import { UserService } from "../services/user.service.js";
 import { userChannel } from "../utils/pusher.js";
 
+vi.mock("../config/env.js", () => ({
+    JWT_SECRET: "secreto-de-test",
+    DATABASE_URL: "postgres://no-usar",
+    DATABASE_SSL: undefined,
+    BEAMS_INSTANCE_ID: undefined,
+    BEAMS_SECRET_KEY: undefined,
+}));
+vi.mock("../db.js", () => ({
+    executeQuery: vi.fn(),
+    afterCommit: (fn) => fn(),
+}));
+
 const USER_ID = 7;
 const SOCKET_ID = "123.456";
 

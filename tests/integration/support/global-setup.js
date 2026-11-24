@@ -12,11 +12,12 @@ const PENDING_MIGRATIONS = [
     fileURLToPath(new URL("../../../migrations/manual/2026-11-22_notificaciones.sql", import.meta.url)),
     fileURLToPath(new URL("../../../migrations/manual/2026-11-22_users_identidad_unica.sql", import.meta.url)),
     fileURLToPath(new URL("../../../migrations/manual/2026-11-22_entidades_alias_mercado_pago.sql", import.meta.url)),
+    fileURLToPath(new URL("../../../migrations/manual/2026-11-23_seguridad_autenticacion.sql", import.meta.url)),
 ];
 const DB_USER = "integration";
 const DB_NAME = "integration";
 
-function findBinary(name) {
+export function findBinary(name) {
     const executable = process.platform === "win32" ? `${name}.exe` : name;
     const directories = [process.env.PG_BIN];
     if (process.platform === "win32") {
@@ -47,11 +48,14 @@ function run(binary, args) {
 }
 
 function startServer(dataDirectory, logFile, port) {
+    const durability = process.env.LOCAL_DB_DURABLE === "1"
+        ? ""
+        : " -c fsync=off -c synchronous_commit=off -c full_page_writes=off";
     execFileSync(
         findBinary("pg_ctl"),
         [
             "start", "-D", dataDirectory, "-l", logFile, "-w",
-            "-o", `-h 127.0.0.1 -p ${port} -c fsync=off -c synchronous_commit=off -c full_page_writes=off`,
+            "-o", `-h 127.0.0.1 -p ${port}${durability}`,
         ],
         { stdio: "ignore", timeout: 30000 },
     );

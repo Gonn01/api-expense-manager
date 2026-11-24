@@ -14,7 +14,7 @@ export class AuthController {
                 return badRequest(res, "Faltan campos");
             }
 
-            await this.authService.register(name, email, password);
+            await this.authService.register(name, email, password, { clientIp: req.ip });
 
             res.json({
                 message: "Usuario creado con éxito",
@@ -33,7 +33,7 @@ export class AuthController {
                 return badRequest(res, "Faltan campos");
             }
 
-            const response = await this.authService.login(email, password);
+            const response = await this.authService.login(email, password, { clientIp: req.ip });
 
             res.json({
                 message: "Login exitoso",
@@ -52,7 +52,11 @@ export class AuthController {
             if (typeof idToken !== "string" || !idToken) {
                 return badRequest(res, "Token faltante");
             }
-            const response = await this.authService.firebaseLogin(idToken, { password, discardPassword });
+            const response = await this.authService.firebaseLogin(
+                idToken,
+                { password, discardPassword },
+                { clientIp: req.ip },
+            );
             res.json({
                 message: "Login exitoso",
                 data: response,

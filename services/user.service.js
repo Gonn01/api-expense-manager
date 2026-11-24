@@ -1,14 +1,18 @@
 import bcrypt from "bcrypt";
+import { AuthRateLimits } from "../utils/auth-rate-limits.js";
 import { customError, ErrorCode } from "../utils/errors.js";
+import { signSessionToken } from "../utils/session-token.js";
 import { generatePushToken, isPushConfigured } from "../utils/push-notifications.js";
 import { authorizePusherChannel, userChannel } from "../utils/pusher.js";
 
 export class UserService {
     constructor({
         userRepository,
+        rateLimitService,
         authorizeChannel = authorizePusherChannel,
     }) {
         this.userRepository = userRepository;
+        this.rateLimitService = rateLimitService;
         this.authorizeChannel = authorizeChannel;
     }
 
@@ -54,15 +58,25 @@ export class UserService {
         const hash = await this.#currentPasswordHash(userId);
 
         if (hash) {
+            const rules = AuthRateLimits.password(userId);
+            await this.rateLimitService.consume(rules);
             const matches =
                 typeof currentPassword === "string" && (await bcrypt.compare(currentPassword, hash));
             if (!matches) {
                 throw customError(ErrorCode.CONTRASENA_INCORRECTA);
             }
+            await this.rateLimitService.reset(rules);
         }
 
-        await this.userRepository.updatePassword(userId, await bcrypt.hash(newPassword, 12));
-        return { has_password: true };
+        const [updated] = await this.userRepository.updatePassword(userId, await bcrypt.hash(newPassword, 12));
+        if (!updated) throw customError(ErrorCode.USUARIO_NOT_FOUND);
+        return { has_password: true, token: signSessionToken(updated) };
+    }
+
+    async revokeSessions(userId) {
+        const rows = await this.userRepository.revokeSessions(userId);
+        if (rows.length === 0) throw customError(ErrorCode.USUARIO_NOT_FOUND);
+        return { revoked: true };
     }
 
     getPushToken(userId, requestedUserId) {

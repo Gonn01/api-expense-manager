@@ -2,23 +2,41 @@ import jwt from 'jsonwebtoken';
 import { logRed } from '../utils/logs_custom.js';
 import { JWT_SECRET } from '../config/env.js';
 import { HttpStatus } from '../utils/http_status.js';
+import { handleError } from '../utils/errors.js';
+import { UserRepository } from '../repositories/user.repository.js';
 
-export function verifyToken(req, res, next) {
-  const token = req.headers.authorization?.split(" ")[1];
+const rejectToken = (res, message) => res.status(HttpStatus.UNAUTHORIZED).json({ message });
 
-  if (!token) {
-    logRed('Token no proporcionado');
-    return res.status(HttpStatus.UNAUTHORIZED).json({ message: 'Token no proporcionado' });
-  }
+export function createVerifyToken(userRepository) {
+  return async function verifyToken(req, res, next) {
+    const token = req.headers.authorization?.split(" ")[1];
 
-  jwt.verify(token, JWT_SECRET, (err, decoded) => {
-    if (err) {
+    if (!token) {
+      logRed('Token no proporcionado');
+      return rejectToken(res, 'Token no proporcionado');
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
+    } catch (err) {
       logRed(`Token inválido: ${err.name}`);
-      return res.status(HttpStatus.UNAUTHORIZED).json({ message: 'Token inválido o vencido' });
+      return rejectToken(res, 'Token inválido o vencido');
+    }
+
+    try {
+      const [user] = await userRepository.getTokenVersion(decoded.userId);
+      if (!user || user.token_version !== decoded.tokenVersion) {
+        logRed('Token revocado');
+        return rejectToken(res, 'Token inválido o vencido');
+      }
+    } catch (err) {
+      return handleError(res, err);
     }
 
     req.session = decoded;
-
-    next();
-  });
+    return next();
+  };
 }
+
+export const verifyToken = createVerifyToken(new UserRepository());

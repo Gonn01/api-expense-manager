@@ -9,7 +9,7 @@ function makeRes() {
 }
 
 function makeReq(overrides = {}) {
-    return { body: {}, params: {}, ...overrides };
+    return { body: {}, params: {}, ip: "1.2.3.4", ...overrides };
 }
 
 describe("AuthController", () => {
@@ -33,7 +33,7 @@ describe("AuthController", () => {
 
             await controller.register(req, res);
 
-            expect(authService.register).toHaveBeenCalledWith("Juan", "juan@test.com", "1234");
+            expect(authService.register).toHaveBeenCalledWith("Juan", "juan@test.com", "1234", { clientIp: "1.2.3.4" });
             expect(res.json).toHaveBeenCalledWith({ message: "Usuario creado con éxito" });
         });
 
@@ -44,7 +44,7 @@ describe("AuthController", () => {
 
             await controller.register(req, res);
 
-            expect(authService.register).toHaveBeenCalledWith("Juan", "juan@test.com", "1234");
+            expect(authService.register).toHaveBeenCalledWith("Juan", "juan@test.com", "1234", { clientIp: "1.2.3.4" });
         });
 
         it("responde 400 cuando faltan campos obligatorios", async () => {
@@ -78,7 +78,7 @@ describe("AuthController", () => {
 
             await controller.login(req, res);
 
-            expect(authService.login).toHaveBeenCalledWith("juan@test.com", "1234");
+            expect(authService.login).toHaveBeenCalledWith("juan@test.com", "1234", { clientIp: "1.2.3.4" });
             expect(res.json).toHaveBeenCalledWith({ message: "Login exitoso", data: { token: "jwt-token" } });
         });
 
@@ -113,7 +113,7 @@ describe("AuthController", () => {
 
             await controller.firebaseLogin(req, res);
 
-            expect(authService.firebaseLogin).toHaveBeenCalledWith("id-token", { password: "1234", discardPassword: false });
+            expect(authService.firebaseLogin).toHaveBeenCalledWith("id-token", { password: "1234", discardPassword: false }, { clientIp: "1.2.3.4" });
             expect(res.json).toHaveBeenCalledWith({ message: "Login exitoso", data: { token: "jwt-token" } });
         });
 

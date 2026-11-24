@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken";
 import { AuthService } from "../services/auth.service.js";
+
+vi.mock("../config/env.js", () => ({ JWT_SECRET: "secreto-de-test", FIREBASE_PROJECT_ID: "proyecto" }));
 
 const publicUser = {
     id: 1,
@@ -23,6 +26,7 @@ const googleIdentity = {
 
 describe("AuthService", () => {
     let authRepository;
+    let rateLimitService;
     let verifyIdToken;
     let service;
 
@@ -35,7 +39,8 @@ describe("AuthService", () => {
             linkFirebaseId: vi.fn(),
         };
         verifyIdToken = vi.fn().mockResolvedValue(googleIdentity);
-        service = new AuthService({ authRepository, verifyIdToken });
+        rateLimitService = { consume: vi.fn().mockResolvedValue(), reset: vi.fn().mockResolvedValue() };
+        service = new AuthService({ authRepository, rateLimitService, verifyIdToken });
     });
 
     describe("login", () => {
@@ -75,6 +80,47 @@ describe("AuthService", () => {
             authRepository.findUserWithPasswordByEmail.mockResolvedValue([]);
 
             await expect(service.login("nadie@test.com", "1234")).rejects.toMatchObject({ code: "CREDENCIALES_INVALIDAS" });
+        });
+
+        it("compara contra un hash aunque el email no exista", async () => {
+            authRepository.findUserWithPasswordByEmail.mockResolvedValue([]);
+            const compare = vi.spyOn(bcrypt, "compare");
+
+            await expect(service.login("nadie@test.com", "1234")).rejects.toMatchObject({ code: "CREDENCIALES_INVALIDAS" });
+
+            expect(compare).toHaveBeenCalledWith("1234", expect.stringMatching(/^\$2b\$12\$/));
+            compare.mockRestore();
+        });
+
+        it("no consulta la cuenta si se superó el límite de intentos", async () => {
+            rateLimitService.consume.mockRejectedValue(Object.assign(new Error("limite"), { code: "DEMASIADOS_INTENTOS" }));
+
+            await expect(service.login("juan@test.com", "1234", { clientIp: "1.1.1.1" })).rejects.toMatchObject({ code: "DEMASIADOS_INTENTOS" });
+
+            expect(authRepository.findUserWithPasswordByEmail).not.toHaveBeenCalled();
+        });
+
+        it("limpia el contador de esa cuenta e IP solo al entrar bien", async () => {
+            const hash = await bcrypt.hash("1234", 4);
+            authRepository.findUserWithPasswordByEmail.mockResolvedValue([{ ...publicUser, password: hash }]);
+
+            await expect(service.login("juan@test.com", "mal", { clientIp: "1.1.1.1" })).rejects.toBeDefined();
+            expect(rateLimitService.reset).not.toHaveBeenCalled();
+
+            await service.login("juan@test.com", "1234", { clientIp: "1.1.1.1" });
+
+            expect(rateLimitService.reset).toHaveBeenCalledWith([expect.objectContaining({ key: "login:juan@test.com:1.1.1.1" })]);
+        });
+
+        it("incluye la versión de sesión en el token, pero no en el usuario", async () => {
+            const hash = await bcrypt.hash("1234", 4);
+            authRepository.findUserWithPasswordByEmail.mockResolvedValue([{ ...publicUser, token_version: 3, password: hash }]);
+
+            const { user, token } = await service.login("juan@test.com", "1234");
+
+            expect(user).not.toHaveProperty("token_version");
+            expect(jwt.decode(token)).toMatchObject({ userId: 1, tokenVersion: 3 });
+            expect(jwt.decode(token)).not.toHaveProperty("email");
         });
     });
 

@@ -51,6 +51,7 @@ FIREBASE_PROJECT_ID=purchase-app-tp
 | Variable | Obligatoria | Para qué se usa |
 | --- | --- | --- |
 | `DATABASE_URL` | Sí | Cadena de conexión a PostgreSQL. |
+| `DATABASE_SSL` | No | Con `disable` conecta sin TLS. Lo usa solo el entorno local temporal; en cualquier otro caso se exige TLS. |
 | `JWT_SECRET` | Sí | Secreto con el que se firman y verifican los JWT de sesión. |
 | `PORT` | No | Puerto HTTP. Por defecto `3000`. |
 | `PUSHER_APP_ID`, `PUSHER_KEY`, `PUSHER_SECRET`, `PUSHER_CLUSTER` | No | Credenciales de Pusher Channels para publicar los eventos de gastos compartidos. |
@@ -59,7 +60,7 @@ FIREBASE_PROJECT_ID=purchase-app-tp
 
 ## Base de datos
 
-La API se conecta a la base PostgreSQL indicada en `DATABASE_URL`, que debe tener el esquema de la aplicación.
+La API se conecta a la base PostgreSQL indicada en `DATABASE_URL`, que debe tener el esquema de la aplicación. Antes de desplegar código nuevo hay que ejecutar sus migraciones de `migrations/manual/`.
 
 ## Correr el proyecto en local
 
@@ -87,6 +88,9 @@ Los orígenes permitidos por CORS están definidos en `index.js`; para consumir 
 | `npm run test:watch` | Tests en modo watch |
 | `npm run test:coverage` | Tests con reporte de cobertura |
 | `npm run test:integration` | Tests por HTTP contra un Postgres local temporal (requiere PostgreSQL instalado) |
+| `npm run start:local` | API en el puerto 3100 con una base temporal y sin servicios externos |
+| `npm run evidence:load -- <carpeta>` | Prueba de carga local |
+| `npm run evidence:resilience -- <carpeta>` | Prueba local de caídas, backup y restauración |
 | `npx eslint .` | Lint |
 
 Los tests de `npm test` son unitarios y no necesitan una base: los de controllers mockean los services y los de services mockean los repositories. Los de integración crean una base temporal desde `migrations/schema.sql`, nunca se conectan a una base remota y la eliminan al terminar.
@@ -96,7 +100,7 @@ Los tests de `npm test` son unitarios y no necesitan una base: los de controller
 ```
 Cliente ──HTTP/JSON + JWT──► Express (/api) ──SQL──► PostgreSQL
    ▲                              │
-   │                              └──► Pusher Channels (canal private-notificaciones-<userId>)
+   │                              └──► Pusher Channels (canal private-notificaciones-<userId>, solo IDs)
    └──────── eventos en tiempo real ◄──┘
 ```
 

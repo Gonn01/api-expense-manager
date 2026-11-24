@@ -47,6 +47,9 @@ npm test                     # vitest run
 npm run test:watch           # vitest watch mode
 npm run test:coverage        # vitest run --coverage
 npm run test:integration     # HTTP tests against a temporary local Postgres (needs PostgreSQL binaries; PG_BIN overrides their folder)
+npm run start:local          # API on port 3100 with a temporary local Postgres and no external services
+npm run evidence:load -- <dir>        # local load test, writes carga.json
+npm run evidence:resilience -- <dir>  # local failure and backup test, writes recuperacion.json
 npx vitest run tests/gastos.controller.test.js              # run a single test file
 npx vitest run tests/gastos.controller.test.js -t "<name>"  # run a single test by name
 npx eslint .                  # lint (no npm script wraps this; eslint.config.js is flat config)
@@ -70,7 +73,9 @@ There is no DI container/framework — factories instantiate everything by hand.
 
 **Routing** (`routes/index.js`, mounted at `/api` in `index.js`): `/api/auth/*` and `/api/health` (DB ping: 200 or 503) are public; `verifyToken` middleware gates everything else. Resource groups: `/user`, `/entidades-financieras` (accounts/cards), `/dashboard`, `/gastos` (expenses — the core resource), `/categorias`, `/notificaciones` (persisted notification feed, with shared-expense actions under `/notificaciones/pendientes`), `/settlement` ("hacer cuentas" settlement sessions and their snapshots).
 
-**Auth**: JWT via `middleware/verify_token.js` — verifies `Authorization: Bearer <jwt>` with `JWT_SECRET`, sets `req.session` (decoded payload, at least `userId`), 401 if the token is missing, invalid or expired (the signal both clients use to log the user out). 403 is reserved for an authenticated user without permission on the resource (`NO_AUTORIZADO`).
+**Auth**: JWT via `middleware/verify_token.js` — verifies `Authorization: Bearer <jwt>` with `JWT_SECRET`, compares its `tokenVersion` with `users.token_version`, sets `req.session` (decoded payload, at least `userId`), 401 if the token is missing, invalid, expired or revoked (the signal both clients use to log the user out). 403 is reserved for an authenticated user without permission on the resource (`NO_AUTORIZADO`).
+
+**Auth protection**: `AuthRateLimitService` consumes atomic Postgres counters before checking credentials (`utils/auth-rate-limits.js`, table `auth_rate_limits`, hashed keys). Changing or discarding a password and `POST /user/sessions/revoke` increment `token_version`.
 
 **Ownership**: every public `GastosService` method takes `userId` and starts with `#getOwned(id, userId)`, which checks the expense's entity belongs to that user. New operations on a user-owned resource must do the same.
 
@@ -84,7 +89,7 @@ There is no DI container/framework — factories instantiate everything by hand.
 
 **Notifications**: `triggerCompartidos` (`utils/pusher.js`) also stores every `PusherEvent` for its recipient in `notifications` after COMMIT, except the actor's own action (`utils/notifications.js`).
 
-**Realtime channels**: each user has a private channel, `private-notificaciones-<userId>` (`userChannel` in `utils/pusher.js`). `POST /user/realtime-auth` signs only the channel of the session user.
+**Realtime channels**: each user has a private channel, `private-notificaciones-<userId>` (`userChannel` in `utils/pusher.js`). `POST /user/realtime-auth` signs only the channel of the session user. `utils/realtime-payload.js` publishes only IDs; names stay in the stored notification.
 
 **Push**: `triggerCompartidos` (`utils/pusher.js`) also sends an Android push through Pusher Beams (`utils/push-notifications.js`) after COMMIT. A new Pusher event needs its text in `utils/push-messages.js`.
 

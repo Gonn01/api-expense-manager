@@ -32,8 +32,22 @@ export class UserRepository {
 
     async updatePassword(userId, hash) {
         return await executeQuery(
-            `UPDATE users SET password = $2 WHERE id = $1 RETURNING id`,
+            `UPDATE users
+             SET password = $2, token_version = token_version + 1
+             WHERE id = $1
+             RETURNING id, token_version`,
             [userId, hash]
+        );
+    }
+
+    async getTokenVersion(userId) {
+        return await executeQuery(`SELECT token_version FROM users WHERE id = $1`, [userId]);
+    }
+
+    async revokeSessions(userId) {
+        return await executeQuery(
+            `UPDATE users SET token_version = token_version + 1 WHERE id = $1 RETURNING id`,
+            [userId]
         );
     }
 

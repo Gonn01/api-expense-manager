@@ -94,6 +94,15 @@ export class UserController {
         }
     };
 
+    revokeSessions = async (req, res) => {
+        try {
+            const result = await this.userService.revokeSessions(req.session.userId);
+            return res.json({ message: "Sesiones cerradas", data: result });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    };
+
     getPushToken = (req, res) => {
         try {
             const token = this.userService.getPushToken(req.session.userId, req.query.user_id);
