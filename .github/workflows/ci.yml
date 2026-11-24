@@ -17,7 +17,10 @@ jobs:
       PG_BIN: /usr/lib/postgresql/17/bin
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y postgresql-17
+      - run: |
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-17
       - uses: actions/setup-node@v4
         with:
           node-version: 22
