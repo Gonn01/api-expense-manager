@@ -46,7 +46,7 @@ npm run dev                  # same as above
 npm test                     # vitest run
 npm run test:watch           # vitest watch mode
 npm run test:coverage        # vitest run --coverage
-npm run test:integration     # HTTP tests against a temporary local Postgres (needs PostgreSQL binaries; PG_BIN overrides their folder)
+npm run test:integration     # HTTP tests against a temporary local Postgres (needs PostgreSQL 17+ binaries; PG_BIN overrides their folder)
 npm run start:local          # API on port 3100 with a temporary local Postgres and no external services
 npm run evidence:load -- <dir>        # local load test, writes carga.json
 npm run evidence:resilience -- <dir>  # local failure and backup test, writes recuperacion.json

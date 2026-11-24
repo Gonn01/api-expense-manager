@@ -87,7 +87,7 @@ Los orígenes permitidos por CORS están definidos en `index.js`; para consumir 
 | `npm test` | Tests unitarios con Vitest |
 | `npm run test:watch` | Tests en modo watch |
 | `npm run test:coverage` | Tests con reporte de cobertura |
-| `npm run test:integration` | Tests por HTTP contra un Postgres local temporal (requiere PostgreSQL instalado) |
+| `npm run test:integration` | Tests por HTTP contra un Postgres local temporal (requiere PostgreSQL 17 o superior instalado) |
 | `npm run start:local` | API en el puerto 3100 con una base temporal y sin servicios externos |
 | `npm run evidence:load -- <carpeta>` | Prueba de carga local |
 | `npm run evidence:resilience -- <carpeta>` | Prueba local de caídas, backup y restauración |
