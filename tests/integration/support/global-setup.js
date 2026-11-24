@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -47,18 +47,27 @@ function run(binary, args) {
     execFileSync(findBinary(binary), args, { stdio: ["ignore", "ignore", "pipe"] });
 }
 
-function startServer(dataDirectory, logFile, port) {
+function startServer(directory, dataDirectory, logFile, port) {
     const durability = process.env.LOCAL_DB_DURABLE === "1"
         ? ""
         : " -c fsync=off -c synchronous_commit=off -c full_page_writes=off";
+    const socketDirectory = process.platform === "win32" ? "" : ` -k ${directory}`;
     execFileSync(
         findBinary("pg_ctl"),
         [
             "start", "-D", dataDirectory, "-l", logFile, "-w",
-            "-o", `-h 127.0.0.1 -p ${port}${durability}`,
+            "-o", `-h 127.0.0.1 -p ${port}${socketDirectory}${durability}`,
         ],
         { stdio: "ignore", timeout: 30000 },
     );
+}
+
+function readLog(logFile) {
+    try {
+        return readFileSync(logFile, "utf8").trim();
+    } catch {
+        return "";
+    }
 }
 
 export default async function setup() {
@@ -77,7 +86,7 @@ export default async function setup() {
 
     try {
         run("initdb", ["-D", dataDirectory, "-U", DB_USER, "-A", "trust", "-E", "UTF8", "--locale=C"]);
-        startServer(dataDirectory, logFile, port);
+        startServer(directory, dataDirectory, logFile, port);
         const connection = ["-h", "127.0.0.1", "-p", String(port), "-U", DB_USER];
         run("psql", [...connection, "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-c", `CREATE DATABASE ${DB_NAME}`]);
         run("psql", [...connection, "-d", DB_NAME, "-v", "ON_ERROR_STOP=1", "-c", "DROP SCHEMA public CASCADE"]);
@@ -86,8 +95,11 @@ export default async function setup() {
             run("psql", [...connection, "-d", DB_NAME, "-v", "ON_ERROR_STOP=1", "-q", "-f", migration]);
         }
     } catch (error) {
+        const log = readLog(logFile);
         stop();
-        throw new Error(`No se pudo crear el Postgres de test: ${error.stderr?.toString() || error.message}`);
+        const detail = error.stderr?.toString() || error.message;
+        throw new Error(`No se pudo crear el Postgres de test: ${detail}${log ? `
+${log}` : ""}`);
     }
 
     process.env.DATABASE_URL = `postgres://${DB_USER}@127.0.0.1:${port}/${DB_NAME}`;
