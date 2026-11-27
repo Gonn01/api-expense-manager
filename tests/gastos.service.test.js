@@ -91,6 +91,8 @@ describe("GastosService", () => {
             getPendingPaymentsByPurchases: vi.fn(async () => []),
         };
         entidadesFinancierasRepository = {
+            lockEntities: vi.fn().mockResolvedValue([]),
+            lockLinksOf: vi.fn().mockResolvedValue([]),
             getById: vi.fn(async (entidadId, userId) =>
                 entidadId === 7 && userId === OWNER ? [{ id: 7, user_id: OWNER }] : [],
             ),

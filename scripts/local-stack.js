@@ -20,6 +20,9 @@ Object.assign(process.env, {
     BEAMS_INSTANCE_ID: "",
     BEAMS_SECRET_KEY: "",
     FIREBASE_PROJECT_ID: "",
+    FIREBASE_WEB_API_KEY: "",
+    FIREBASE_CLIENT_EMAIL: "",
+    FIREBASE_PRIVATE_KEY: "",
 });
 
 let stopped = false;

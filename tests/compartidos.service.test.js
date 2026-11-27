@@ -28,6 +28,8 @@ describe("CompartidosService.aprobar: vínculo con el emisor", () => {
             getUserName: vi.fn(async () => [{ name: "Juan" }]),
         };
         entidadesFinancierasRepository = {
+            lockEntities: vi.fn().mockResolvedValue([]),
+            lockLinksOf: vi.fn().mockResolvedValue([]),
             create: vi.fn(async () => [{ id: 9 }]),
             getById: vi.fn(async () => entidad(null)),
             findByLinkedUser: vi.fn(async () => []),
@@ -228,6 +230,8 @@ describe("CompartidosService: gasto rechazado del emisor", () => {
         };
         conOriginal(ORIGINAL);
         entidadesFinancierasRepository = {
+            lockEntities: vi.fn().mockResolvedValue([]),
+            lockLinksOf: vi.fn().mockResolvedValue([]),
             getById: vi.fn(async () => [{ id: 5, user_id: EMISOR, linked_user_id: RECEPTOR }]),
         };
         movementsRepository = { createGastoLog: vi.fn(), createGastoLogs: vi.fn(), createEntidadLog: vi.fn() };

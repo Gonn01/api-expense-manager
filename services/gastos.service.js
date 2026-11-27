@@ -108,10 +108,10 @@ export class GastosService {
         }
     }
 
-    async requireSettlementSession(userId) {
+    async requireSettlementSession(userId, options) {
         if (!this.settlementRepository) return null;
         if (!userId) throw customError(ErrorCode.SETTLEMENT_REQUIRED);
-        const session = await this.settlementRepository.getOpenSession(userId);
+        const session = await this.settlementRepository.getOpenSession(userId, options);
         if (!session) throw customError(ErrorCode.SETTLEMENT_REQUIRED);
         return session;
     }
@@ -121,9 +121,9 @@ export class GastosService {
         return row?.name ?? null;
     }
 
-    async getOpenSettlementSession(userId) {
+    async getOpenSettlementSession(userId, options) {
         if (!this.settlementRepository || !userId) return null;
-        return await this.settlementRepository.getOpenSession(userId);
+        return await this.settlementRepository.getOpenSession(userId, options);
     }
 
     async #assertOwner(gasto, userId, { allowReceiver = false } = {}) {
@@ -435,6 +435,8 @@ export class GastosService {
 
     async update(id, userId, input = {}) {
         return this.tx(async () => {
+            const [unlocked] = await this.#getOwnedWithOwner(id, userId);
+            await this.gastosRepository.lockPurchases([id, unlocked.linked_purchase_id]);
             const [current] = await this.#getOwnedWithOwner(id, userId);
             const base = this.#normalizarUpdate({}, current);
             const next = this.#normalizarUpdate(input, current);
@@ -840,6 +842,11 @@ export class GastosService {
         const entidadLogs = [];
 
         const created = await this.tx(async () => {
+            await this.entidadesFinancierasRepository.lockEntities(
+                [financial_entity_id, usaEntidadPago ? payment_entity_id : null],
+                userId,
+                { share: true },
+            );
             const [entidad, entidadPago] = await Promise.all([
                 this.entidadesFinancierasRepository.getById(financial_entity_id, userId),
                 usaEntidadPago
@@ -945,6 +952,8 @@ export class GastosService {
         let entidadLog = null;
 
         const updated = await this.tx(async () => {
+            await this.#getOwnedWithOwner(id, userId);
+            await this.gastosRepository.lockPurchases([id]);
             const [current] = await this.#getOwnedWithOwner(id, userId);
 
             if (value && this.#isFullyPaid(current)) {
@@ -995,13 +1004,11 @@ export class GastosService {
         if (!/^\d+$/.test(String(purchase_id))) throw customError(ErrorCode.GASTO_NOT_FOUND);
 
         return this.tx(async () => {
+            const session = direct ? null : await this.getOpenSettlementSession(userId, { forUpdate: true });
             const siblings = await this.gastosRepository.getSharedSibling(purchase_id, { includePendingApproval: true });
             await this.gastosRepository.lockPurchases([purchase_id, siblings[0]?.sibling_id]);
 
-            const [rows, session] = await Promise.all([
-                this.#getOwnedWithOwner(purchase_id, userId),
-                direct ? null : this.getOpenSettlementSession(userId),
-            ]);
+            const rows = await this.#getOwnedWithOwner(purchase_id, userId);
             this.#assertCuotasLibres(rows[0]);
 
             if (session) {
@@ -1258,59 +1265,61 @@ export class GastosService {
             throw customError(ErrorCode.LISTA_IDS_INVALIDA);
         }
 
-        const session = await this.requireSettlementSession(userId);
+        return this.tx(async () => {
+            const session = await this.requireSettlementSession(userId, { forUpdate: true });
 
-        const validIds = [...new Set(purchaseIds.map(String))].filter((id) => /^\d+$/.test(id));
-        const rows = await this.gastosRepository.getByIdsWithOwner(validIds, userId);
-        const byId = new Map(rows.map((r) => [String(r.id), r]));
+            const validIds = [...new Set(purchaseIds.map(String))].filter((id) => /^\d+$/.test(id));
+            const rows = await this.gastosRepository.getByIdsWithOwner(validIds, userId);
+            const byId = new Map(rows.map((r) => [String(r.id), r]));
 
-        const updated = [];
-        const failed = [];
+            const updated = [];
+            const failed = [];
 
-        for (const id of purchaseIds) {
-            const row = byId.get(String(id));
-            if (!row) {
-                failed.push({ id, reason: "Gasto no encontrado" });
-                continue;
+            for (const id of purchaseIds) {
+                const row = byId.get(String(id));
+                if (!row) {
+                    failed.push({ id, reason: "Gasto no encontrado" });
+                    continue;
+                }
+
+                const { owned, ...gasto } = row;
+                if (!owned) {
+                    failed.push({ id, reason: "No autorizado" });
+                    continue;
+                }
+
+                if (this.#sinAceptar(gasto)) {
+                    failed.push({ id, reason: "El gasto no está activo" });
+                    continue;
+                }
+
+                if (gasto.is_postponed) {
+                    failed.push({ id, reason: "Gasto postergado para la próxima sesión" });
+                    continue;
+                }
+
+                if (!gasto.fixed_expense && gasto.payed_quotas >= gasto.number_of_quotas) {
+                    failed.push({ id, reason: "Todas las cuotas ya están pagas" });
+                    continue;
+                }
+
+                if (this.#cuotasCubiertas(gasto)) {
+                    failed.push({ id, reason: "Las cuotas que quedan ya tienen pagos esperando confirmación" });
+                    continue;
+                }
+
+                updated.push(gasto);
             }
 
-            const { owned, ...gasto } = row;
-            if (!owned) {
-                failed.push({ id, reason: "No autorizado" });
-                continue;
+            if (updated.length) {
+                await this.settlementRepository.upsertItems(
+                    session.id,
+                    updated.map((g) => Number(g.id)),
+                );
             }
 
-            if (this.#sinAceptar(gasto)) {
-                failed.push({ id, reason: "El gasto no está activo" });
-                continue;
-            }
-
-            if (gasto.is_postponed) {
-                failed.push({ id, reason: "Gasto postergado para la próxima sesión" });
-                continue;
-            }
-
-            if (!gasto.fixed_expense && gasto.payed_quotas >= gasto.number_of_quotas) {
-                failed.push({ id, reason: "Todas las cuotas ya están pagas" });
-                continue;
-            }
-
-            if (this.#cuotasCubiertas(gasto)) {
-                failed.push({ id, reason: "Las cuotas que quedan ya tienen pagos esperando confirmación" });
-                continue;
-            }
-
-            updated.push(gasto);
-        }
-
-        if (updated.length) {
-            await this.settlementRepository.upsertItems(
-                session.id,
-                updated.map((g) => Number(g.id)),
-            );
-        }
-
-        return { updated, failed };
+            return { updated, failed };
+        });
     }
 
     async obtenerMovementsPorGasto(gastoId) {

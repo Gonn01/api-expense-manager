@@ -104,6 +104,9 @@ ${log}` : ""}`);
 
     process.env.DATABASE_URL = `postgres://${DB_USER}@127.0.0.1:${port}/${DB_NAME}`;
     process.env.JWT_SECRET = "secreto-de-integracion";
+    process.env.FIREBASE_WEB_API_KEY = "";
+    process.env.FIREBASE_CLIENT_EMAIL = "";
+    process.env.FIREBASE_PRIVATE_KEY = "";
 
     return stop;
 }

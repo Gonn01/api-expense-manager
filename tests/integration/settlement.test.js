@@ -139,6 +139,113 @@ describe("sesión de cuentas", () => {
         expect(response.status).toBe(404);
     });
 
+    describe("con pedidos simultáneos", () => {
+        const ROUNDS = 5;
+
+        const sessionsByStatus = async () => {
+            const rows = await executeQuery(
+                "SELECT status, count(*)::int AS total FROM settlement_sessions GROUP BY status",
+            );
+            return Object.fromEntries(rows.map((r) => [r.status, r.total]));
+        };
+
+        it("iniciar dos veces a la vez devuelve la misma sesión", async () => {
+            for (let round = 0; round < ROUNDS; round++) {
+                await executeQuery("DELETE FROM settlement_sessions");
+
+                const responses = await Promise.all([
+                    ana.post("/settlement/session"),
+                    ana.post("/settlement/session"),
+                ]);
+
+                expect(responses.map((r) => r.status).sort()).toEqual([200, 201]);
+                expect(responses[0].data.session.id).toBe(responses[1].data.session.id);
+            }
+        });
+
+        it("terminar y descartar a la vez no borra una sesión ya cerrada", async () => {
+            for (let round = 0; round < ROUNDS; round++) {
+                await resetDatabase();
+                ana = await createUser("Ana");
+                entity = await createEntity(ana);
+                const gasto = await createExpense(ana, entity);
+                await ana.post("/settlement/session");
+                await mark(ana, gasto);
+
+                const [finished, discarded] = await Promise.all([
+                    ana.post("/settlement/session/finish"),
+                    ana.delete("/settlement/session"),
+                ]);
+
+                const [snapshots] = await executeQuery("SELECT count(*)::int AS total FROM settlement_snapshots");
+                const sessions = await sessionsByStatus();
+                if (finished.status === 200) {
+                    expect(discarded.data.discarded).toBe(false);
+                    expect(snapshots.total).toBe(1);
+                    expect(sessions.FINISHED).toBe(1);
+                    expect(await countMovements(gasto, "PAYMENT")).toBe(1);
+                } else {
+                    expect(finished.code).toBe("NO_OPEN_SESSION");
+                    expect(discarded.data.discarded).toBe(true);
+                    expect(snapshots.total).toBe(0);
+                    expect(await countMovements(gasto, "PAYMENT")).toBe(0);
+                }
+                expect(sessions.OPEN ?? 0).toBe(0);
+            }
+        });
+
+        it("marcar mientras se termina no deja ítems sueltos en una sesión cerrada", async () => {
+            for (let round = 0; round < ROUNDS; round++) {
+                await resetDatabase();
+                ana = await createUser("Ana");
+                entity = await createEntity(ana);
+                const uno = await createExpense(ana, entity, { name: "Uno" });
+                const dos = await createExpense(ana, entity, { name: "Dos" });
+                await ana.post("/settlement/session");
+                await mark(ana, uno);
+
+                const [finished, marked] = await Promise.all([
+                    ana.post("/settlement/session/finish"),
+                    mark(ana, dos),
+                ]);
+
+                expect(finished.status).toBe(200);
+                expect([200, 409]).toContain(marked.status);
+                const [snapshot] = await executeQuery("SELECT items FROM settlement_snapshots");
+                const snapshotItems =
+                    typeof snapshot.items === "string" ? JSON.parse(snapshot.items) : snapshot.items;
+                const inSnapshot = snapshotItems.map((item) => Number(item.purchase_id)).sort((a, b) => a - b);
+                const items = await executeQuery(
+                    `SELECT i.purchase_id FROM settlement_session_items i
+                     JOIN settlement_sessions s ON s.id = i.session_id
+                     WHERE s.status = 'FINISHED' ORDER BY i.purchase_id`,
+                );
+                expect(items.map((row) => Number(row.purchase_id))).toEqual(inSnapshot);
+            }
+        });
+
+        it("pagar una cuota mientras se termina no se traba", async () => {
+            for (let round = 0; round < ROUNDS; round++) {
+                await resetDatabase();
+                ana = await createUser("Ana");
+                entity = await createEntity(ana);
+                const uno = await createExpense(ana, entity, { name: "Uno" });
+                const dos = await createExpense(ana, entity, { name: "Dos" });
+                await ana.post("/settlement/session");
+                await mark(ana, uno);
+
+                const responses = await Promise.all([
+                    ana.post("/settlement/session/finish"),
+                    ana.post(`/gastos/${dos}/settle-quota`),
+                    ana.post(`/gastos/${uno}/settle-quota`),
+                ]);
+
+                expect(responses.map((r) => r.status)).not.toContain(500);
+                expect(responses[0].status).toBe(200);
+            }
+        });
+    });
+
     it("el pago en lote exige una sesión abierta", async () => {
         const gasto = await createExpense(ana, entity);
 

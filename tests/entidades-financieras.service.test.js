@@ -19,6 +19,8 @@ describe("EntidadesFinancierasService: eliminar y restaurar en cascada", () => {
 
     beforeEach(() => {
         entidadesFinancierasRepository = {
+            lockEntities: vi.fn().mockResolvedValue([]),
+            lockLinksOf: vi.fn().mockResolvedValue([]),
             getById: vi.fn(async () => [{ id: ENTIDAD, user_id: USER }]),
             delete: vi.fn(async () => [{ id: ENTIDAD }]),
             restaurar: vi.fn(async () => [{ id: ENTIDAD, deleted: false }]),

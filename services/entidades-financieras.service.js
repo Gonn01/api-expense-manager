@@ -160,6 +160,7 @@ export class EntidadesFinancierasService {
 
   async eliminar(id, userId) {
     return this.tx(async () => {
+      await this.entidadesFinancierasRepository.lockEntities([id], userId);
       const [[entidad], gastos, session] = await Promise.all([
         this.entidadesFinancierasRepository.getById(id, userId),
         this.gastosRepository.getIdsByEntidad(id),
@@ -198,6 +199,11 @@ export class EntidadesFinancierasService {
   }
 
   async vincularUsuario(entityId, userId, email) {
+    return this.tx(() => this.#vincular(entityId, userId, email));
+  }
+
+  async #vincular(entityId, userId, email) {
+    await this.entidadesFinancierasRepository.lockLinksOf(userId);
     const entidad = await this.entidadesFinancierasRepository.getById(entityId, userId);
     if (!entidad.length) throw customError(ErrorCode.ENTIDAD_NOT_FOUND);
 

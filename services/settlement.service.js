@@ -3,6 +3,7 @@ import { MovementType } from "../utils/enums.js";
 import { withTransaction } from "../db.js";
 
 const ESTADOS_CONFIRMADOS = new Set(["aprobado", "pagado", "reversion_pendiente"]);
+const UNIQUE_VIOLATION = "23505";
 
 function parseJson(value, fallback) {
     if (value == null) return fallback;
@@ -107,46 +108,55 @@ export class SettlementService {
         return { session, items };
     }
 
-    async startSession(userId) {
+    async startSession(userId, canRetry = true) {
         const existing = await this.settlementRepository.getOpenSession(userId);
         if (existing) {
             const items = await this.settlementRepository.getSessionItems(existing.id);
             return { session: existing, items, alreadyOpen: true };
         }
-        const session = await this.settlementRepository.createSession(userId);
-        return { session, items: [], alreadyOpen: false };
+        try {
+            const session = await this.settlementRepository.createSession(userId);
+            return { session, items: [], alreadyOpen: false };
+        } catch (err) {
+            if (canRetry && err?.code === UNIQUE_VIOLATION) return this.startSession(userId, false);
+            throw err;
+        }
     }
 
     async setItem(userId, purchaseId, checked) {
-        const session = await this.#requireOpenSession(userId);
-        if (checked) {
-            await this.gastosService.assertOwnedAll([purchaseId], userId);
-            await this.#assertMarcables([purchaseId], userId);
-            await this.settlementRepository.upsertItem(session.id, purchaseId);
-        } else {
-            await this.settlementRepository.removeItem(session.id, purchaseId);
-        }
-        const items = await this.settlementRepository.getSessionItems(session.id);
-        return { session, items };
+        return this.tx(async () => {
+            const session = await this.#requireOpenSession(userId, { forUpdate: true });
+            if (checked) {
+                await this.gastosService.assertOwnedAll([purchaseId], userId);
+                await this.#assertMarcables([purchaseId], userId);
+                await this.settlementRepository.upsertItem(session.id, purchaseId);
+            } else {
+                await this.settlementRepository.removeItem(session.id, purchaseId);
+            }
+            const items = await this.settlementRepository.getSessionItems(session.id);
+            return { session, items };
+        });
     }
 
     async setItemsBulk(userId, purchaseIds, checked) {
-        const session = await this.#requireOpenSession(userId);
-        const ids = purchaseIds.map(Number).filter(Number.isFinite);
-        if (ids.length) {
-            if (checked) {
-                await this.gastosService.assertOwnedAll(ids, userId);
-                const errores = this.gastosService.errorDeMarcado
-                    ? await this.gastosService.errorDeMarcado(ids, userId)
-                    : new Map();
-                const marcables = ids.filter((id) => !errores.has(id));
-                if (marcables.length) await this.settlementRepository.addItems(session.id, marcables);
-            } else {
-                await this.settlementRepository.removeItems(session.id, ids);
+        return this.tx(async () => {
+            const session = await this.#requireOpenSession(userId, { forUpdate: true });
+            const ids = purchaseIds.map(Number).filter(Number.isFinite);
+            if (ids.length) {
+                if (checked) {
+                    await this.gastosService.assertOwnedAll(ids, userId);
+                    const errores = this.gastosService.errorDeMarcado
+                        ? await this.gastosService.errorDeMarcado(ids, userId)
+                        : new Map();
+                    const marcables = ids.filter((id) => !errores.has(id));
+                    if (marcables.length) await this.settlementRepository.addItems(session.id, marcables);
+                } else {
+                    await this.settlementRepository.removeItems(session.id, ids);
+                }
             }
-        }
-        const items = await this.settlementRepository.getSessionItems(session.id);
-        return { session, items };
+            const items = await this.settlementRepository.getSessionItems(session.id);
+            return { session, items };
+        });
     }
 
     async finishSession(userId) {
@@ -203,10 +213,12 @@ export class SettlementService {
     }
 
     async discardSession(userId) {
-        const session = await this.settlementRepository.getOpenSession(userId);
-        if (!session) return { discarded: false };
-        await this.settlementRepository.deleteSession(session.id);
-        return { discarded: true };
+        return this.tx(async () => {
+            const session = await this.settlementRepository.getOpenSession(userId, { forUpdate: true });
+            if (!session) return { discarded: false };
+            const deleted = await this.settlementRepository.deleteOpenSession(session.id);
+            return { discarded: deleted.length > 0 };
+        });
     }
 
     async listSnapshots(userId) {
@@ -220,8 +232,8 @@ export class SettlementService {
         return this.#withPaymentStatus(normalizeSnapshot(snapshot));
     }
 
-    async #requireOpenSession(userId) {
-        const session = await this.settlementRepository.getOpenSession(userId);
+    async #requireOpenSession(userId, options) {
+        const session = await this.settlementRepository.getOpenSession(userId, options);
         if (!session) throw customError(ErrorCode.SETTLEMENT_REQUIRED, { message: "No hay una sesión de cuentas abierta" });
         return session;
     }

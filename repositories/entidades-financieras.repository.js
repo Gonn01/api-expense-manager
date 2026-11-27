@@ -118,6 +118,23 @@ export class EntidadesFinancierasRepository {
         );
     }
 
+    async lockEntities(ids, userId, { share = false } = {}) {
+        const unique = [...new Set(ids.filter((id) => id != null).map(Number))].sort((a, b) => a - b);
+        if (!unique.length) return [];
+        const placeholders = unique.map((_, i) => `$${i + 2}::bigint`).join(", ");
+        return await executeQuery(
+            `SELECT id FROM financial_entities
+             WHERE user_id = $1 AND id IN (${placeholders})
+             ORDER BY id
+             ${share ? "FOR SHARE" : "FOR UPDATE"}`,
+            [userId, ...unique]
+        );
+    }
+
+    async lockLinksOf(userId) {
+        return await executeQuery(`SELECT id FROM users WHERE id = $1 FOR NO KEY UPDATE`, [userId]);
+    }
+
     async findByLinkedUser(userId, linkedUserId) {
         return await executeQuery(
             `SELECT id, name FROM financial_entities

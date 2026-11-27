@@ -20,6 +20,8 @@ describe("EntidadesFinancierasService: operaciones", () => {
 
     beforeEach(() => {
         entidadesFinancierasRepository = {
+            lockEntities: vi.fn().mockResolvedValue([]),
+            lockLinksOf: vi.fn().mockResolvedValue([]),
             getById: vi.fn(async () => [entidad()]),
             findByName: vi.fn(async () => []),
             findByLinkedUser: vi.fn(async () => []),

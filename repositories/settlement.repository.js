@@ -136,9 +136,9 @@ export class SettlementRepository {
         );
     }
 
-    async deleteSession(sessionId) {
+    async deleteOpenSession(sessionId) {
         return await executeQuery(
-            `DELETE FROM settlement_sessions WHERE id = $1`,
+            `DELETE FROM settlement_sessions WHERE id = $1 AND status = 'OPEN' RETURNING id`,
             [sessionId],
         );
     }

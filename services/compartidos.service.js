@@ -96,6 +96,7 @@ export class CompartidosService {
     }
 
     async #vincularAlEmisor(entityId, userId, senderUserId) {
+        await this.entidadesFinancierasRepository.lockLinksOf(userId);
         const yaVinculada = await this.entidadesFinancierasRepository.findByLinkedUser(userId, senderUserId);
         if (yaVinculada.length) return;
 
