@@ -12,6 +12,10 @@ vi.mock("../config/env.js", () => ({
     DATABASE_SSL: undefined,
     BEAMS_INSTANCE_ID: undefined,
     BEAMS_SECRET_KEY: undefined,
+    FIREBASE_PROJECT_ID: undefined,
+    FIREBASE_WEB_API_KEY: undefined,
+    FIREBASE_CLIENT_EMAIL: undefined,
+    FIREBASE_PRIVATE_KEY: undefined,
 }));
 vi.mock("../db.js", () => ({
     executeQuery,

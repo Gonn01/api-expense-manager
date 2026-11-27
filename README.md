@@ -46,6 +46,9 @@ BEAMS_INSTANCE_ID=
 BEAMS_SECRET_KEY=
 
 FIREBASE_PROJECT_ID=purchase-app-tp
+FIREBASE_WEB_API_KEY=
+FIREBASE_CLIENT_EMAIL=
+FIREBASE_PRIVATE_KEY=
 ```
 
 | Variable | Obligatoria | Para qué se usa |
@@ -57,6 +60,9 @@ FIREBASE_PROJECT_ID=purchase-app-tp
 | `PUSHER_APP_ID`, `PUSHER_KEY`, `PUSHER_SECRET`, `PUSHER_CLUSTER` | No | Credenciales de Pusher Channels para publicar los eventos de gastos compartidos. |
 | `BEAMS_INSTANCE_ID`, `BEAMS_SECRET_KEY` | No | Credenciales de Pusher Beams para emitir tokens y enviar notificaciones push a Android. |
 | `FIREBASE_PROJECT_ID` | Para entrar con Google | Proyecto de Firebase contra el que se verifican los ID tokens. Sin esta variable, `POST /api/auth/firebase-login` responde 503 `GOOGLE_NO_CONFIGURADO`. |
+| `FIREBASE_WEB_API_KEY` | Para verificar el email y recuperar la contraseña | Clave web del proyecto de Firebase (la misma que `VITE_FIREBASE_API_KEY` de la web). La API la usa para validar contraseñas, crear cuentas y pedir a Firebase los mails de verificación y de recuperación. |
+| `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` | Para verificar el email y recuperar la contraseña | Cuenta de servicio de Firebase Admin (consola de Firebase → Configuración del proyecto → Cuentas de servicio → Generar nueva clave privada). Son los campos `client_email` (termina en `.iam.gserviceaccount.com`, no es un mail personal) y `private_key` del JSON que descarga la consola. En `FIREBASE_PRIVATE_KEY` los saltos de línea pueden ir escritos como `
+`, con o sin comillas; si faltan las líneas `-----BEGIN PRIVATE KEY-----` y `-----END PRIVATE KEY-----`, la API las agrega (`utils/private-key.js`). Con estas dos y `FIREBASE_WEB_API_KEY`, las contraseñas se guardan en Firebase, el registro manda un mail de verificación y el inicio de sesión exige el email verificado; sin ellas la API guarda la contraseña en la base (bcrypt), no verifica el email y `POST /api/auth/resend-verification` y `POST /api/auth/forgot-password` responden 503 `AUTH_EMAIL_NO_CONFIGURADO`. En la consola de Firebase hay que habilitar el proveedor Correo electrónico/contraseña. |
 
 ## Base de datos
 

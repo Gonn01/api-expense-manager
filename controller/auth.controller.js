@@ -1,5 +1,6 @@
-
 import { handleError, badRequest } from "../utils/errors.js";
+
+const isFilledString = (value) => typeof value === "string" && value.trim().length > 0;
 
 export class AuthController {
     constructor(authService) {
@@ -8,16 +9,20 @@ export class AuthController {
 
     register = async (req, res) => {
         try {
-            const { name, email, password } = req.body;
+            const { name, email, password, language } = req.body;
 
             if (!name || !email || !password) {
                 return badRequest(res, "Faltan campos");
             }
 
-            await this.authService.register(name, email, password, { clientIp: req.ip });
+            const result = await this.authService.register(name, email, password, {
+                clientIp: req.ip,
+                language,
+            });
 
             res.json({
                 message: "Usuario creado con éxito",
+                data: result,
             });
 
         } catch (err) {
@@ -44,6 +49,39 @@ export class AuthController {
             return handleError(res, err);
         }
     }
+
+    resendVerification = async (req, res) => {
+        try {
+            const { email, password, language } = req.body;
+
+            if (!isFilledString(email) || !isFilledString(password)) {
+                return badRequest(res, "Faltan campos");
+            }
+
+            const result = await this.authService.resendVerification(email, password, {
+                clientIp: req.ip,
+                language,
+            });
+            res.json({ data: result });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    };
+
+    requestPasswordReset = async (req, res) => {
+        try {
+            const { email, language } = req.body;
+
+            if (!isFilledString(email)) {
+                return badRequest(res, "Falta el email");
+            }
+
+            const result = await this.authService.requestPasswordReset(email, { clientIp: req.ip, language });
+            res.json({ data: result });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    };
 
     firebaseLogin = async (req, res) => {
         try {

@@ -10,10 +10,16 @@ export class UserService {
         userRepository,
         rateLimitService,
         authorizeChannel = authorizePusherChannel,
+        identity = null,
     }) {
         this.userRepository = userRepository;
         this.rateLimitService = rateLimitService;
         this.authorizeChannel = authorizeChannel;
+        this.identity = identity;
+    }
+
+    get #usesFirebase() {
+        return Boolean(this.identity?.isConfigured);
     }
 
     async updatePreferredCurrency(userId, preferredCurrency) {
@@ -39,36 +45,60 @@ export class UserService {
         return rows[0];
     }
 
-    async #currentPasswordHash(userId) {
-        const rows = await this.userRepository.getPasswordHash(userId);
+    async #passwordInfo(userId) {
+        const rows = await this.userRepository.getPasswordInfo(userId);
 
         if (rows.length === 0) {
             throw customError(ErrorCode.USUARIO_NOT_FOUND);
         }
 
-        return rows[0].password;
+        return rows[0];
+    }
+
+    async #firebaseHasPassword(info) {
+        if (!this.#usesFirebase) return false;
+        return this.identity.hasPasswordProvider({ uid: info.firebase_user_id, email: info.email });
     }
 
     async getPasswordStatus(userId) {
-        const hash = await this.#currentPasswordHash(userId);
-        return { has_password: Boolean(hash) };
+        const info = await this.#passwordInfo(userId);
+        const hasPassword = Boolean(info.password) || (await this.#firebaseHasPassword(info));
+        return { has_password: hasPassword };
+    }
+
+    async #checkCurrentPassword(userId, info, currentPassword) {
+        const firebaseHasPassword = await this.#firebaseHasPassword(info);
+        if (!firebaseHasPassword && !info.password) return;
+
+        const rules = AuthRateLimits.password(userId);
+        await this.rateLimitService.consume(rules);
+        const provided = typeof currentPassword === "string" && currentPassword.length > 0;
+        const matches = !provided
+            ? false
+            : firebaseHasPassword
+              ? Boolean(await this.identity.signInWithPassword(info.email, currentPassword))
+              : await bcrypt.compare(currentPassword, info.password);
+        if (!matches) {
+            throw customError(ErrorCode.CONTRASENA_INCORRECTA);
+        }
+        await this.rateLimitService.reset(rules);
     }
 
     async updatePassword(userId, currentPassword, newPassword) {
-        const hash = await this.#currentPasswordHash(userId);
+        const info = await this.#passwordInfo(userId);
+        await this.#checkCurrentPassword(userId, info, currentPassword);
 
-        if (hash) {
-            const rules = AuthRateLimits.password(userId);
-            await this.rateLimitService.consume(rules);
-            const matches =
-                typeof currentPassword === "string" && (await bcrypt.compare(currentPassword, hash));
-            if (!matches) {
-                throw customError(ErrorCode.CONTRASENA_INCORRECTA);
-            }
-            await this.rateLimitService.reset(rules);
-        }
-
-        const [updated] = await this.userRepository.updatePassword(userId, await bcrypt.hash(newPassword, 12));
+        const [updated] = this.#usesFirebase
+            ? await this.userRepository.moveToFirebasePassword(
+                  userId,
+                  await this.identity.setPassword({
+                      uid: info.firebase_user_id,
+                      email: info.email,
+                      name: info.name,
+                      password: newPassword,
+                  }),
+              )
+            : await this.userRepository.updatePassword(userId, await bcrypt.hash(newPassword, 12));
         if (!updated) throw customError(ErrorCode.USUARIO_NOT_FOUND);
         return { has_password: true, token: signSessionToken(updated) };
     }

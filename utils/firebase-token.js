@@ -1,14 +1,8 @@
-import { getApps, initializeApp } from "firebase-admin/app";
-import { getAuth } from "firebase-admin/auth";
 import { FIREBASE_PROJECT_ID } from "../config/env.js";
 import { customError, ErrorCode } from "./errors.js";
+import { firebaseAdminAuth } from "./firebase-app.js";
 
 const INFRASTRUCTURE_ERROR_CODES = new Set(["auth/internal-error", "app/network-error"]);
-
-function firebaseAuth() {
-    const app = getApps()[0] ?? initializeApp({ projectId: FIREBASE_PROJECT_ID });
-    return getAuth(app);
-}
 
 export function isInvalidFirebaseTokenError(err) {
     const code = err?.code ?? err?.errorInfo?.code;
@@ -21,7 +15,7 @@ export async function verifyFirebaseIdToken(idToken, auth = null) {
     }
 
     try {
-        const decoded = await (auth ?? firebaseAuth()).verifyIdToken(idToken);
+        const decoded = await (auth ?? firebaseAdminAuth()).verifyIdToken(idToken);
         return {
             firebaseId: decoded.uid,
             email: decoded.email ?? null,

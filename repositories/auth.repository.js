@@ -23,6 +23,23 @@ export class AuthRepository {
         );
     }
 
+    async findUserWithPasswordByFirebaseId(firebaseId) {
+        return await executeQuery(
+            `SELECT ${USER_SESSION_COLUMNS}, password FROM users WHERE firebase_user_id = $1 LIMIT 1`,
+            [firebaseId]
+        );
+    }
+
+    async moveToFirebase(userId, firebaseId) {
+        return await executeQuery(
+            `UPDATE users
+             SET firebase_user_id = $2, password = NULL
+             WHERE id = $1
+             RETURNING ${USER_SESSION_COLUMNS}`,
+            [userId, firebaseId]
+        );
+    }
+
     async createUser(name, email, hash, firebaseId, avatar) {
         return await executeQuery(
             `INSERT INTO users (name, email, password, firebase_user_id, avatar, created_at)

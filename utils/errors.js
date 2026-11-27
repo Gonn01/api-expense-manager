@@ -50,6 +50,8 @@ const CATALOG = Object.freeze({
     GOOGLE_NO_CONFIGURADO: { status: HttpStatus.SERVICE_UNAVAILABLE, message: "El inicio de sesión con Google no está configurado." },
     VINCULACION_REQUIERE_CONTRASENA: { status: HttpStatus.CONFLICT, message: "Ya tenés una cuenta con este email. Ingresá tu contraseña para vincular Google." },
     CONTRASENA_INCORRECTA: { status: HttpStatus.BAD_REQUEST, message: "La contraseña es incorrecta." },
+    EMAIL_NO_VERIFICADO: { status: HttpStatus.FORBIDDEN, message: "Todavía no verificaste tu email. Abrí el enlace que te mandamos o pedí uno nuevo." },
+    AUTH_EMAIL_NO_CONFIGURADO: { status: HttpStatus.SERVICE_UNAVAILABLE, message: "La verificación de email y la recuperación de contraseña no están configuradas." },
     DEMASIADOS_INTENTOS: { status: 429, message: "Demasiados intentos. Esperá unos minutos y volvé a probar." },
 
     NO_AUTORIZADO: { status: HttpStatus.FORBIDDEN, message: "No autorizado" },

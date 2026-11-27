@@ -256,5 +256,225 @@ describe("AuthService", () => {
                 await expect(service.firebaseLogin("id-token", { discardPassword: "true" })).rejects.toMatchObject({ code: "VINCULACION_REQUIERE_CONTRASENA" });
             });
         });
+
+        it("rechaza un correo sin verificar aunque la identidad ya esté vinculada", async () => {
+            verifyIdToken.mockResolvedValue({ ...googleIdentity, emailVerified: false });
+            authRepository.findUserByFirebaseId.mockResolvedValue([publicUser]);
+
+            await expect(service.firebaseLogin("id-token")).rejects.toMatchObject({ code: "GOOGLE_EMAIL_NO_VERIFICADO" });
+        });
+    });
+
+    describe("sin Firebase configurado", () => {
+        it("no ofrece reenviar la verificación ni recuperar la contraseña", async () => {
+            await expect(service.resendVerification("juan@test.com", "secreta")).rejects.toMatchObject({ code: "AUTH_EMAIL_NO_CONFIGURADO" });
+            await expect(service.requestPasswordReset("juan@test.com")).rejects.toMatchObject({ code: "AUTH_EMAIL_NO_CONFIGURADO" });
+        });
+
+        it("el registro no manda verificación", async () => {
+            authRepository.findUserWithPasswordByEmail.mockResolvedValue([]);
+            authRepository.createUser.mockResolvedValue([publicUser]);
+
+            await expect(service.register("Juan", "juan@test.com", "123456")).resolves.toEqual({ verification_sent: false });
+        });
+    });
+
+    describe("con Firebase configurado", () => {
+        let identity;
+        const verified = { ...googleIdentity, email: "juan@test.com" };
+
+        beforeEach(() => {
+            authRepository.findUserWithPasswordByFirebaseId = vi.fn().mockResolvedValue([]);
+            authRepository.moveToFirebase = vi.fn().mockImplementation(async (id, firebaseId) => [
+                { ...publicUser, id, firebase_user_id: firebaseId, token_version: 0 },
+            ]);
+            identity = {
+                isConfigured: true,
+                signInWithPassword: vi.fn().mockResolvedValue({ idToken: "tok", uid: "fb123" }),
+                verify: vi.fn().mockResolvedValue(verified),
+                signUp: vi.fn().mockResolvedValue({ idToken: "tok-nuevo", uid: "fb-nuevo" }),
+                sendVerificationEmail: vi.fn().mockResolvedValue(),
+                sendPasswordResetEmail: vi.fn().mockResolvedValue(),
+                hasPasswordProvider: vi.fn().mockResolvedValue(false),
+                setPassword: vi.fn().mockResolvedValue("fb-migrado"),
+                ensureRecoverableUser: vi.fn().mockResolvedValue("fb-recuperable"),
+            };
+            service = new AuthService({ authRepository, rateLimitService, verifyIdToken, identity });
+        });
+
+        describe("login", () => {
+            it("entra con la cuenta vinculada a la identidad de Firebase", async () => {
+                authRepository.findUserWithPasswordByFirebaseId.mockResolvedValue([{ ...publicUser, password: null }]);
+
+                const { user } = await service.login(" Juan@Test.com ", "secreta");
+
+                expect(identity.signInWithPassword).toHaveBeenCalledWith("juan@test.com", "secreta");
+                expect(user).toEqual(publicUser);
+                expect(authRepository.moveToFirebase).not.toHaveBeenCalled();
+            });
+
+            it("rechaza un email sin verificar sin tocar la base", async () => {
+                identity.verify.mockResolvedValue({ ...verified, emailVerified: false });
+
+                await expect(service.login("juan@test.com", "secreta")).rejects.toMatchObject({ code: "EMAIL_NO_VERIFICADO" });
+
+                expect(authRepository.findUserWithPasswordByFirebaseId).not.toHaveBeenCalled();
+                expect(rateLimitService.reset).not.toHaveBeenCalled();
+            });
+
+            it("borra la contraseña anterior de la base si la cuenta todavía la tenía", async () => {
+                authRepository.findUserWithPasswordByFirebaseId.mockResolvedValue([{ ...publicUser, password: "hash" }]);
+
+                await service.login("juan@test.com", "secreta");
+
+                expect(authRepository.moveToFirebase).toHaveBeenCalledWith(1, "fb123");
+            });
+
+            it("vincula por email una cuenta que todavía no tenía la identidad", async () => {
+                authRepository.findUserWithPasswordByEmail.mockResolvedValue([{ ...publicUser, firebase_user_id: null }]);
+
+                await service.login("juan@test.com", "secreta");
+
+                expect(authRepository.moveToFirebase).toHaveBeenCalledWith(1, "fb123");
+            });
+
+            it("crea la cuenta si Firebase la conoce y la base no", async () => {
+                authRepository.findUserWithPasswordByEmail.mockResolvedValue([]);
+                authRepository.createUser.mockResolvedValue([publicUser]);
+
+                await service.login("juan@test.com", "secreta");
+
+                expect(authRepository.createUser).toHaveBeenCalledWith("Juan", "juan@test.com", null, "fb123", "https://avatar.url");
+            });
+
+            describe("cuenta con la contraseña guardada en la base", () => {
+                beforeEach(async () => {
+                    identity.signInWithPassword.mockResolvedValue(null);
+                    authRepository.findUserWithPasswordByEmail.mockResolvedValue([
+                        { ...publicUser, firebase_user_id: null, password: await bcrypt.hash("secreta", 4) },
+                    ]);
+                });
+
+                it("pasa la contraseña a Firebase y la borra de la base", async () => {
+                    const { user } = await service.login("juan@test.com", "secreta");
+
+                    expect(identity.setPassword).toHaveBeenCalledWith({
+                        uid: null,
+                        email: "juan@test.com",
+                        name: "Juan",
+                        password: "secreta",
+                    });
+                    expect(authRepository.moveToFirebase).toHaveBeenCalledWith(1, "fb-migrado");
+                    expect(user.firebase_user_id).toBe("fb-migrado");
+                });
+
+                it("rechaza una contraseña incorrecta sin migrar", async () => {
+                    await expect(service.login("juan@test.com", "otra")).rejects.toMatchObject({ code: "CREDENCIALES_INVALIDAS" });
+
+                    expect(identity.setPassword).not.toHaveBeenCalled();
+                });
+
+                it("no acepta la contraseña vieja si Firebase ya tiene una", async () => {
+                    identity.hasPasswordProvider.mockResolvedValue(true);
+
+                    await expect(service.login("juan@test.com", "secreta")).rejects.toMatchObject({ code: "CREDENCIALES_INVALIDAS" });
+
+                    expect(identity.setPassword).not.toHaveBeenCalled();
+                    expect(authRepository.moveToFirebase).toHaveBeenCalledWith(1, null);
+                });
+            });
+
+            it("rechaza si ni Firebase ni la base reconocen la contraseña", async () => {
+                identity.signInWithPassword.mockResolvedValue(null);
+                authRepository.findUserWithPasswordByEmail.mockResolvedValue([]);
+
+                await expect(service.login("juan@test.com", "secreta")).rejects.toMatchObject({ code: "CREDENCIALES_INVALIDAS" });
+            });
+        });
+
+        describe("register", () => {
+            it("crea la cuenta en Firebase, manda la verificación y guarda la identidad sin contraseña", async () => {
+                authRepository.findUserWithPasswordByEmail.mockResolvedValue([]);
+                authRepository.createUser.mockResolvedValue([publicUser]);
+
+                const result = await service.register("Juan", " Juan@Test.com ", "123456", { language: "en" });
+
+                expect(result).toEqual({ verification_sent: true });
+                expect(identity.signUp).toHaveBeenCalledWith("juan@test.com", "123456", "Juan");
+                expect(identity.sendVerificationEmail).toHaveBeenCalledWith("tok-nuevo", "en");
+                expect(authRepository.createUser).toHaveBeenCalledWith("Juan", "juan@test.com", null, "fb-nuevo");
+            });
+
+            it("trata como registrada una cuenta con contraseña en Firebase", async () => {
+                authRepository.findUserWithPasswordByEmail.mockResolvedValue([{ ...publicUser, password: null }]);
+                identity.hasPasswordProvider.mockResolvedValue(true);
+
+                await expect(service.register("Juan", "juan@test.com", "123456")).rejects.toMatchObject({ code: "EMAIL_YA_REGISTRADO" });
+                expect(identity.signUp).not.toHaveBeenCalled();
+            });
+        });
+
+        describe("resendVerification", () => {
+            it("manda otro mail si el email sigue sin verificar", async () => {
+                identity.verify.mockResolvedValue({ ...verified, emailVerified: false });
+
+                await expect(service.resendVerification("juan@test.com", "secreta", { language: "es" })).resolves.toEqual({
+                    verification_sent: true,
+                    already_verified: false,
+                });
+                expect(identity.sendVerificationEmail).toHaveBeenCalledWith("tok", "es");
+            });
+
+            it("no manda nada si ya está verificado", async () => {
+                await expect(service.resendVerification("juan@test.com", "secreta")).resolves.toEqual({
+                    verification_sent: false,
+                    already_verified: true,
+                });
+                expect(identity.sendVerificationEmail).not.toHaveBeenCalled();
+            });
+
+            it("exige la contraseña correcta", async () => {
+                identity.signInWithPassword.mockResolvedValue(null);
+
+                await expect(service.resendVerification("juan@test.com", "otra")).rejects.toMatchObject({ code: "CREDENCIALES_INVALIDAS" });
+            });
+
+            it("limita los pedidos por correo", async () => {
+                rateLimitService.consume.mockRejectedValue(Object.assign(new Error("limite"), { code: "DEMASIADOS_INTENTOS" }));
+
+                await expect(service.resendVerification("juan@test.com", "secreta")).rejects.toMatchObject({ code: "DEMASIADOS_INTENTOS" });
+                expect(identity.signInWithPassword).not.toHaveBeenCalled();
+            });
+        });
+
+        describe("requestPasswordReset", () => {
+            it("responde igual aunque el email no tenga cuenta", async () => {
+                authRepository.findUserWithPasswordByEmail.mockResolvedValue([]);
+
+                await expect(service.requestPasswordReset("nadie@test.com", { language: "en" })).resolves.toEqual({ sent: true });
+
+                expect(identity.ensureRecoverableUser).not.toHaveBeenCalled();
+                expect(identity.sendPasswordResetEmail).toHaveBeenCalledWith("nadie@test.com", "en");
+            });
+
+            it("prepara en Firebase una cuenta que todavía tenía la contraseña en la base", async () => {
+                authRepository.findUserWithPasswordByEmail.mockResolvedValue([{ ...publicUser, firebase_user_id: null, password: "hash" }]);
+
+                await service.requestPasswordReset("juan@test.com");
+
+                expect(identity.ensureRecoverableUser).toHaveBeenCalledWith({ uid: null, email: "juan@test.com", name: "Juan" });
+                expect(authRepository.moveToFirebase).toHaveBeenCalledWith(1, "fb-recuperable");
+                expect(identity.sendPasswordResetEmail).toHaveBeenCalledWith("juan@test.com", undefined);
+            });
+
+            it("no toca la base si la cuenta ya está en Firebase", async () => {
+                identity.ensureRecoverableUser.mockResolvedValue("fb123");
+                authRepository.findUserWithPasswordByEmail.mockResolvedValue([{ ...publicUser, password: null }]);
+
+                await service.requestPasswordReset("juan@test.com");
+
+                expect(authRepository.moveToFirebase).not.toHaveBeenCalled();
+            });
+        });
     });
 });

@@ -23,10 +23,20 @@ export class UserRepository {
         );
     }
 
-    async getPasswordHash(userId) {
+    async getPasswordInfo(userId) {
         return await executeQuery(
-            `SELECT password FROM users WHERE id = $1`,
+            `SELECT password, firebase_user_id, email, name FROM users WHERE id = $1`,
             [userId]
+        );
+    }
+
+    async moveToFirebasePassword(userId, firebaseId) {
+        return await executeQuery(
+            `UPDATE users
+             SET password = NULL, firebase_user_id = $2, token_version = token_version + 1
+             WHERE id = $1
+             RETURNING id, token_version`,
+            [userId, firebaseId]
         );
     }
 
