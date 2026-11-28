@@ -99,6 +99,7 @@ const PROTECTED_ROUTES = [
     ["delete", "/settlement/session"],
     ["get", "/settlement/snapshots"],
     ["get", "/settlement/snapshots/1"],
+    ["get", "/settlement/chart-history"],
 ];
 
 let server;

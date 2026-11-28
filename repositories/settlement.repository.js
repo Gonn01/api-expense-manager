@@ -104,7 +104,13 @@ export class SettlementRepository {
                      THEN p.amount::numeric / p.number_of_quotas
                      ELSE p.amount END AS amount_per_quota,
                 fe.id   AS entity_id,
-                fe.name AS entity_name
+                fe.name AS entity_name,
+                COALESCE((
+                    SELECT json_agg(json_build_object('id', c.id, 'name', c.name, 'color', c.color) ORDER BY c.name)
+                    FROM purchases_categories pc
+                    JOIN user_categories c ON c.id = pc.category_id AND c.deleted = false
+                    WHERE pc.purchase_id = i.purchase_id
+                ), '[]'::json) AS categories
              FROM settlement_session_items i
              JOIN purchases p ON p.id = i.purchase_id
              LEFT JOIN financial_entities fe ON fe.id = p.financial_entity_id
@@ -180,6 +186,34 @@ export class SettlementRepository {
              WHERE s.user_id = $1
              ORDER BY s.finished_at DESC`,
             [userId],
+        );
+    }
+
+    async listSnapshotsForCharts(userId, { limit, before = null }) {
+        return await executeQuery(
+            `SELECT id, month, finished_at, items
+             FROM settlement_snapshots
+             WHERE user_id = $1 AND ($2::int IS NULL OR id < $2::int)
+             ORDER BY id DESC
+             LIMIT $3`,
+            [userId, before, limit],
+        );
+    }
+
+    async getCurrentCategories(purchaseIds) {
+        const ids = [...new Set(purchaseIds.map(Number))].filter(Number.isFinite);
+        if (!ids.length) return [];
+        const placeholders = ids.map((_, i) => `$${i + 1}::bigint`).join(", ");
+        return await executeQuery(
+            `SELECT p.id AS purchase_id, COALESCE((
+                    SELECT json_agg(json_build_object('id', c.id, 'name', c.name, 'color', c.color) ORDER BY c.name)
+                    FROM purchases_categories pc
+                    JOIN user_categories c ON c.id = pc.category_id AND c.deleted = false
+                    WHERE pc.purchase_id = p.id
+                ), '[]'::json) AS categories
+             FROM purchases p
+             WHERE p.id IN (${placeholders})`,
+            ids,
         );
     }
 

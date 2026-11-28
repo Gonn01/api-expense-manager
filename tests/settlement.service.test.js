@@ -247,3 +247,120 @@ describe("SettlementService: pagos compartidos en el resumen", () => {
         expect(snapshot.totals.confirmed.items).toBe(3);
     });
 });
+
+describe("SettlementService: historial para gráficos", () => {
+    let settlementRepository;
+    let movementsRepository;
+    let service;
+
+    const item = (overrides) => ({
+        purchase_id: 1,
+        name: "Gasto",
+        entity_id: 7,
+        entity_name: "Banco",
+        amount_per_quota: 100,
+        currency: "ARS",
+        type: "EGRESO",
+        fixed_expense: false,
+        movement_id: null,
+        ...overrides,
+    });
+
+    beforeEach(() => {
+        settlementRepository = {
+            listSnapshotsForCharts: vi.fn(async () => []),
+            getCurrentCategories: vi.fn(async () => []),
+        };
+        movementsRepository = { getMovementsByIds: vi.fn(async () => []) };
+        service = new SettlementService({ settlementRepository, movementsRepository, runInTransaction: (fn) => fn() });
+    });
+
+    it("pide una sesión más que la página para saber si hay anteriores", async () => {
+        settlementRepository.listSnapshotsForCharts.mockResolvedValue([
+            { id: 9, month: "2026-11", finished_at: "f9", items: [] },
+            { id: 8, month: "2026-10", finished_at: "f8", items: [] },
+            { id: 7, month: "2026-09", finished_at: "f7", items: [] },
+        ]);
+
+        const result = await service.getChartHistory(USER, { limit: 2, before: 10 });
+
+        expect(settlementRepository.listSnapshotsForCharts).toHaveBeenCalledWith(USER, { limit: 3, before: 10 });
+        expect(result.sessions.map((s) => s.id)).toEqual([9, 8]);
+        expect(result.next_before).toBe(8);
+    });
+
+    it("no ofrece más páginas cuando no quedan sesiones", async () => {
+        settlementRepository.listSnapshotsForCharts.mockResolvedValue([{ id: 3, month: "2026-11", finished_at: "f", items: [] }]);
+
+        const result = await service.getChartHistory(USER);
+
+        expect(settlementRepository.listSnapshotsForCharts).toHaveBeenCalledWith(USER, { limit: 7, before: null });
+        expect(result.next_before).toBeNull();
+    });
+
+    it("cuenta solo los pagos confirmados", async () => {
+        settlementRepository.listSnapshotsForCharts.mockResolvedValue([
+            {
+                id: 3,
+                month: "2026-11",
+                finished_at: "f",
+                items: JSON.stringify([
+                    item({ purchase_id: 1, movement_id: 11, categories: [] }),
+                    item({ purchase_id: 2, movement_id: 12, categories: [] }),
+                    item({ purchase_id: 3, movement_id: 13, shared: true, categories: [] }),
+                    item({ purchase_id: 4, movement_id: 14, shared: true, categories: [] }),
+                ]),
+            },
+        ]);
+        movementsRepository.getMovementsByIds.mockResolvedValue([
+            { id: 11, movement_type: "PAYMENT" },
+            { id: 12, movement_type: "PAYMENT_REVERTED" },
+            { id: 13, movement_type: "PENDING_PAYMENT" },
+            { id: 14, movement_type: "PAYMENT_REJECTED" },
+        ]);
+
+        const { sessions } = await service.getChartHistory(USER);
+
+        expect(sessions[0].items.map((it) => it.purchase_id)).toEqual([1]);
+    });
+
+    it("filtra por entidad", async () => {
+        settlementRepository.listSnapshotsForCharts.mockResolvedValue([
+            {
+                id: 3,
+                month: "2026-11",
+                finished_at: "f",
+                items: [item({ purchase_id: 1, entity_id: 7, categories: [] }), item({ purchase_id: 2, entity_id: 8, categories: [] })],
+            },
+        ]);
+
+        const { sessions } = await service.getChartHistory(USER, { entityId: 8 });
+
+        expect(sessions[0].items.map((it) => it.purchase_id)).toEqual([2]);
+    });
+
+    it("usa las categorías guardadas y completa con las actuales las de sesiones viejas", async () => {
+        const guardada = [{ id: 1, name: "Hogar", color: "#000" }];
+        const actual = [{ id: 2, name: "Ocio", color: "#fff" }];
+        settlementRepository.listSnapshotsForCharts.mockResolvedValue([
+            {
+                id: 3,
+                month: "2026-11",
+                finished_at: "f",
+                items: [item({ purchase_id: 1, categories: guardada }), item({ purchase_id: 2 })],
+            },
+        ]);
+        settlementRepository.getCurrentCategories.mockResolvedValue([{ purchase_id: 2, categories: JSON.stringify(actual) }]);
+
+        const { sessions } = await service.getChartHistory(USER);
+
+        expect(settlementRepository.getCurrentCategories).toHaveBeenCalledWith([2]);
+        expect(sessions[0].items.map((it) => it.categories)).toEqual([guardada, actual]);
+    });
+
+    it("limita el tamaño de la página", async () => {
+        await service.getChartHistory(USER, { limit: 500 });
+
+        expect(settlementRepository.listSnapshotsForCharts).toHaveBeenCalledWith(USER, { limit: 25, before: null });
+    });
+});

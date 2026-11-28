@@ -4,6 +4,10 @@ import { withTransaction } from "../db.js";
 
 const ESTADOS_CONFIRMADOS = new Set(["aprobado", "pagado", "reversion_pendiente"]);
 const UNIQUE_VIOLATION = "23505";
+const CHART_HISTORY_DEFAULT_LIMIT = 6;
+const CHART_HISTORY_MAX_LIMIT = 24;
+
+const isConfirmed = (status) => status == null || ESTADOS_CONFIRMADOS.has(status);
 
 function parseJson(value, fallback) {
     if (value == null) return fallback;
@@ -83,9 +87,7 @@ export class SettlementService {
             payment_status: paymentStatus(it, byId.get(String(it.movement_id))),
         }));
 
-        const confirmed = buildTotals(
-            withStatus.filter((it) => it.payment_status == null || ESTADOS_CONFIRMADOS.has(it.payment_status)),
-        );
+        const confirmed = buildTotals(withStatus.filter((it) => isConfirmed(it.payment_status)));
 
         return {
             ...snapshot,
@@ -187,6 +189,7 @@ export class SettlementService {
                     shared: payment?.shared ?? false,
                     payment_role: payment?.role ?? null,
                     counterparty_name: payment?.counterparty_name ?? null,
+                    categories: parseJson(r.categories, []),
                 };
             });
 
@@ -219,6 +222,53 @@ export class SettlementService {
             const deleted = await this.settlementRepository.deleteOpenSession(session.id);
             return { discarded: deleted.length > 0 };
         });
+    }
+
+    async getChartHistory(userId, { limit = CHART_HISTORY_DEFAULT_LIMIT, before = null, entityId = null } = {}) {
+        const pageSize = Math.min(Math.max(Number(limit) || CHART_HISTORY_DEFAULT_LIMIT, 1), CHART_HISTORY_MAX_LIMIT);
+        const rows = await this.settlementRepository.listSnapshotsForCharts(userId, {
+            limit: pageSize + 1,
+            before,
+        });
+        const page = rows.slice(0, pageSize);
+        const snapshots = page.map((row) => ({ ...row, items: parseJson(row.items, []) }));
+
+        const movementIds = snapshots.flatMap((s) => s.items.map((it) => it.movement_id)).filter((id) => id != null);
+        const movements = movementIds.length && this.movementsRepository
+            ? await this.movementsRepository.getMovementsByIds(movementIds)
+            : [];
+        const movementById = new Map(movements.map((m) => [String(m.id), m]));
+
+        const sinCategorias = snapshots.flatMap((s) => s.items.filter((it) => !Array.isArray(it.categories)));
+        const actuales = sinCategorias.length
+            ? await this.settlementRepository.getCurrentCategories(sinCategorias.map((it) => it.purchase_id))
+            : [];
+        const categoriasPorGasto = new Map(actuales.map((r) => [String(r.purchase_id), parseJson(r.categories, [])]));
+
+        const sessions = snapshots.map((snapshot) => ({
+            id: snapshot.id,
+            month: snapshot.month,
+            finished_at: snapshot.finished_at,
+            items: snapshot.items
+                .filter((it) => isConfirmed(paymentStatus(it, movementById.get(String(it.movement_id)))))
+                .filter((it) => entityId == null || String(it.entity_id) === String(entityId))
+                .map((it) => ({
+                    purchase_id: it.purchase_id,
+                    entity_id: it.entity_id,
+                    type: it.type,
+                    currency: it.currency,
+                    amount_per_quota: Number(it.amount_per_quota ?? 0),
+                    fixed_expense: Boolean(it.fixed_expense),
+                    categories: Array.isArray(it.categories)
+                        ? it.categories
+                        : (categoriasPorGasto.get(String(it.purchase_id)) ?? []),
+                })),
+        }));
+
+        return {
+            sessions,
+            next_before: rows.length > pageSize ? page.at(-1).id : null,
+        };
     }
 
     async listSnapshots(userId) {

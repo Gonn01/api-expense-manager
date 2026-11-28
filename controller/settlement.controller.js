@@ -83,6 +83,25 @@ export class SettlementController {
         }
     };
 
+    getChartHistory = async (req, res) => {
+        try {
+            const { userId } = req.session;
+            const { limit, before, entity_id: entityId } = req.query;
+            const isPositiveInt = (value) => value === undefined || /^\d+$/.test(String(value));
+            if (!isPositiveInt(limit) || !isPositiveInt(before) || !isPositiveInt(entityId)) {
+                return badRequest(res, "limit, before y entity_id deben ser enteros positivos");
+            }
+            const data = await this.settlementService.getChartHistory(userId, {
+                limit: limit === undefined ? undefined : Number(limit),
+                before: before === undefined ? null : Number(before),
+                entityId: entityId === undefined ? null : Number(entityId),
+            });
+            res.json({ message: "Historial para gráficos", data });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    };
+
     getSnapshot = async (req, res) => {
         try {
             const { userId } = req.session;

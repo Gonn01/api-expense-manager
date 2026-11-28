@@ -11,6 +11,7 @@ router.post("/session/finish", controller.finishSession);
 router.delete("/session", controller.discardSession);
 
 router.get("/snapshots", controller.listSnapshots);
+router.get("/chart-history", controller.getChartHistory);
 router.get("/snapshots/:id", controller.getSnapshot);
 
 export default router;

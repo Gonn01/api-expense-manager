@@ -246,6 +246,55 @@ describe("sesión de cuentas", () => {
         });
     });
 
+    describe("historial para gráficos", () => {
+        it("devuelve las sesiones cerradas con sus gastos confirmados y las categorías guardadas", async () => {
+            const categoria = await ana.post("/categorias", { name: "Hogar", color: "#123456" });
+            const otraEntidad = await createEntity(ana, "Tarjeta");
+            const uno = await createExpense(ana, entity, { name: "Uno", category_ids: [categoria.data.id] });
+            const dos = await createExpense(ana, otraEntidad, { name: "Dos", amount: 50, number_of_quotas: 1 });
+            await ana.post("/settlement/session");
+            await mark(ana, uno);
+            await mark(ana, dos);
+            await ana.post("/settlement/session/finish");
+            await executeQuery("DELETE FROM purchases_categories");
+
+            const todo = await ana.get("/settlement/chart-history");
+            const deEntidad = await ana.get(`/settlement/chart-history?entity_id=${otraEntidad}`);
+
+            expect(todo.status).toBe(200);
+            expect(todo.data.next_before).toBeNull();
+            expect(todo.data.sessions).toHaveLength(1);
+            const items = todo.data.sessions[0].items;
+            expect(items.map((it) => Number(it.purchase_id)).sort((a, b) => a - b)).toEqual([uno, dos].sort((a, b) => a - b));
+            const conCategoria = items.find((it) => Number(it.purchase_id) === uno);
+            expect(conCategoria.categories.map((c) => c.name)).toEqual(["Hogar"]);
+            expect(deEntidad.data.sessions[0].items.map((it) => Number(it.purchase_id))).toEqual([dos]);
+        });
+
+        it("pagina de la sesión más nueva a la más vieja", async () => {
+            for (let i = 0; i < 3; i++) {
+                const gasto = await createExpense(ana, entity, { name: `Gasto ${i}` });
+                await ana.post("/settlement/session");
+                await mark(ana, gasto);
+                await ana.post("/settlement/session/finish");
+            }
+
+            const primera = await ana.get("/settlement/chart-history?limit=2");
+            const segunda = await ana.get(`/settlement/chart-history?limit=2&before=${primera.data.next_before}`);
+
+            expect(primera.data.sessions).toHaveLength(2);
+            expect(primera.data.sessions[0].id).toBeGreaterThan(primera.data.sessions[1].id);
+            expect(segunda.data.sessions).toHaveLength(1);
+            expect(segunda.data.next_before).toBeNull();
+        });
+
+        it("rechaza parámetros que no son enteros", async () => {
+            const response = await ana.get("/settlement/chart-history?limit=abc");
+
+            expect(response.status).toBe(400);
+        });
+    });
+
     it("el pago en lote exige una sesión abierta", async () => {
         const gasto = await createExpense(ana, entity);
 
